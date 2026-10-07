@@ -111,6 +111,13 @@ tr:last-child td{border-bottom:none}
 ul.notes{margin:8px 0 0;padding-left:18px;font-size:13px}
 ul.notes li{margin:3px 0}
 ul.notes .btn{padding:0 6px;margin-left:4px;font-size:12px}
+.sheetent{border-top:1px dashed var(--border);margin-top:6px;padding-top:6px}
+.tag,.filelist .muted{white-space:nowrap}
+@media (min-width:900px){ #uploadGrid{grid-template-columns:2fr 1.3fr 1fr 1fr} }
+.sheetent:first-of-type{border-top:none}
+.widebox{display:flex;flex-direction:column;gap:2px;font-size:12px;max-height:150px;overflow:auto}
+.st{font-size:12px;padding:1px 8px;border-radius:99px;white-space:nowrap}
+.st.ok{background:var(--ok-weak);color:var(--ok)}.st.bad{background:var(--danger-weak);color:var(--danger)}.st.warn{background:var(--warn-weak);color:var(--warn)}.st.info{background:var(--info-weak);color:var(--info)}
 </style>
 </head>
 <body>
@@ -158,7 +165,7 @@ ul.notes .btn{padding:0 6px;margin-left:4px;font-size:12px}
         <tbody id="rateBody"></tbody>
       </table>
     </div>
-    <p class="muted" style="font-size:12px;margin:8px 0 0">단가를 비워 두면 "변동 요율"로 보고 단가 검증에서 빼요(예: 실비). 중량 구간 요율은 청구서에 중량 열이 있을 때 검증해요. 청구서에 적힌 이름이 다르면 "청구서 표기"에 쉼표로 적어 주세요. 통화가 설정과 다른 행은 검증에서 빠져요.</p>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">단가를 비워 두면 "변동 요율"로 보고 단가 검증에서 빼요(예: 실비). 중량 구간 요율은 청구서에 중량 열이 있을 때 검증해요. 청구서에 적힌 이름이 다르면 "청구서 표기"에 쉼표로 적어 주세요. 통화가 다른 요율(예: JPY 배송비)은 같은 통화로 청구된 줄에만 적용해요.</p>
     <details class="map hidden" id="rateNotesBox"><summary></summary><ul class="notes"></ul></details>
   </div>
 
@@ -169,7 +176,7 @@ ul.notes .btn{padding:0 6px;margin-left:4px;font-size:12px}
       <label class="f">업체 이름 (탭 이름)<input type="text" id="vendorName" placeholder="예: CGETC"></label>
       <label class="f">청구서 번호<input type="text" id="invNo" placeholder="예: INV-2026-09"></label>
       <label class="f">청구 기간<input type="text" id="invPeriod" placeholder="예: September 2026"></label>
-      <label class="f">PDF 총액 (자동 추출 또는 직접 입력)<input type="text" id="pdfTotal" placeholder="PDF를 올리면 자동으로 채워져요"></label>
+      <label class="f">요약 총액, 부가세 제외 (자동 추출 또는 직접 입력)<input type="text" id="pdfTotal" placeholder="청구서 요약을 올리면 자동으로 채워져요"></label>
       <label class="f">단가 허용 오차(%)<input type="number" id="tolPct" value="1" step="0.1" min="0"></label>
       <label class="f">통화<select id="currency"><option>USD</option><option>KRW</option><option>JPY</option><option>EUR</option></select></label>
       <label class="f">메일 언어<select id="mailLang"><option value="en">영어</option><option value="ko">한국어</option></select></label>
@@ -187,6 +194,7 @@ ul.notes .btn{padding:0 6px;margin-left:4px;font-size:12px}
   <div id="results" class="section hidden">
     <div class="kpis" id="kpis"></div>
     <div id="totalBanner"></div>
+    <div id="reconCard" class="card section hidden"></div>
     <div class="card section">
       <div class="row" style="justify-content:space-between">
         <h2 style="margin:0">이상 건 목록</h2>
@@ -269,8 +277,8 @@ const PDF_WORKER_B64 = "LyoqCiAqIEBsaWNzdGFydCBUaGUgZm9sbG93aW5nIGlzIHRoZSBlbnRp
 /* ========== 필드 정의 / 동의어 ========== */
 const FIELDS = {
   invoice: [
-    ['orderId','주문번호',true],['tracking','송장번호'],['date','일자'],['chargeType','청구 항목',true],
-    ['desc','설명'],['channel','채널'],['qty','수량'],['rate','단가'],['amount','금액',true],['weight','중량']
+    ['orderId','주문번호'],['tracking','송장번호'],['date','일자'],['chargeType','청구 항목',true],
+    ['desc','설명'],['group','구분'],['channel','채널'],['qty','수량'],['rate','단가'],['amount','금액',true],['weight','중량'],['currency','통화']
   ],
   ship: [['orderId','주문번호',true],['tracking','송장번호'],['channel','채널',true],['qty','수량'],['date','출고일']],
   rates: [['chargeType','청구 항목',true],['channel','채널'],['rate','계약 단가',true],['basis','기준']]
@@ -280,14 +288,16 @@ const SYN = {
   orderId:['order id','order no','order number','order#','orderid','order','reference','reference no','ref','ref no','customer reference','customer order','po','po no','so','so no','sales order','주문번호','오더번호','주문id','주문 번호','오더','주문코드'],
   tracking:['tracking','tracking no','tracking number','tracking#','awb','송장','송장번호','운송장번호','운송장'],
   date:['date','ship date','shipped date','invoice date','transaction date','service date','출고일','출고일자','일자','날짜','배송일'],
-  chargeType:['charge type','fee type','charge','service','service type','charge description','item','category','fee','청구항목','항목','서비스','비용항목','청구 항목'],
-  desc:['description','memo','remark','remarks','note','notes','details','내용','비고','설명','상세'],
-  channel:['channel','order type','b2b/b2c','shipment type','sales channel','채널','주문유형','구분','유형','판매채널'],
+  chargeType:['charge type','fee type','charge','service','service type','charge description','item','fee','청구항목','항목','서비스','비용항목','청구 항목','분류','작업','작업내용','작업구분','청구내역','비용구분','품명','품목'],
+  desc:['description','memo','remark','remarks','note','notes','details','내용','비고','설명','상세','서비스타입','서비스유형'],
+  group:['구분','category','대분류','카테고리','section','group','항목구분'],
+  channel:['channel','order type','b2b/b2c','shipment type','sales channel','채널','주문유형','유형','판매채널'],
+  currency:['currency','통화','환종','배송비환종','정산환종','cur','ccy','currency code'],
   qty:['qty','quantity','units','unit qty','pcs','count','ea','수량','개수','출고수량'],
   rate:['rate','unit price','unit rate','price','unit cost','contract rate','단가','요율','계약단가','계약 단가'],
   amount:['amount','total','charge amount','line total','extended','total amount','net amount','금액','합계','청구금액','청구액'],
   basis:['basis','unit','uom','per','기준','단위'],
-  weight:['weight','gross weight','actual weight','chargeable weight','billable weight','weight(g)','weight(kg)','wt','중량','무게','실중량','청구중량','적용중량','중량(g)','중량(kg)','kg']
+  weight:['weight','gross weight','actual weight','chargeable weight','billable weight','weight(g)','weight(kg)','wt','중량','무게','실중량','청구중량','적용중량','중량(g)','중량(kg)','kg','청구무게','청구무게(kg)','청구무게(g)']
 };
 const nh = s => String(s ?? '').toLowerCase().replace(/[\s_\-\.:()\/\\]/g,'');
 const SYN_N = Object.fromEntries(Object.entries(SYN).map(([k,v])=>[k,v.map(nh)]));
@@ -314,11 +324,16 @@ function fmtDate(v){
   if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0,10);
   return String(v ?? '');
 }
-function money(n){
+function money(n, cur){
   if (n === null || n === undefined || isNaN(n)) return '-';
-  const cur = $('currency').value;
-  try { return new Intl.NumberFormat('en-US',{style:'currency',currency:cur,maximumFractionDigits:cur==='KRW'?0:2}).format(n); }
-  catch(e){ return n.toFixed(2); }
+  cur = cur || $('currency').value;
+  try { return new Intl.NumberFormat('en-US',{style:'currency',currency:cur,maximumFractionDigits:cur==='KRW'||cur==='JPY'?0:2}).format(n); }
+  catch(e){ return (+n).toFixed(2); }
+}
+// 통화별 금액을 "₩1,000 + ¥500"처럼
+function moneyBy(by){
+  const ks = Object.keys(by).filter(k => Math.abs(by[k]) > 0.0049);
+  return ks.length ? ks.map(k => money(by[k], k)).join(' + ') : money(0);
 }
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1800); }
 function lsGet(k,d){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){ return d; } }
@@ -341,9 +356,9 @@ const isUnitBasis = b => /unit|ea|pcs|piece|each|item|개|낱개|수량/i.test(S
 
 /* ========== 상태 ========== */
 const DS_META = {
-  invoice:{title:'이번 달 청구서', hint:'3PL 상세 청구 엑셀/CSV', req:true, multi:true, accept:'.xlsx,.xls,.csv'},
-  pdf:{title:'청구서 PDF', hint:'총액 대사용 (선택)', req:false, multi:false, accept:'.pdf'},
-  ship:{title:'우리 출고 내역', hint:'주문번호·채널(B2B/B2C)·수량', req:false, multi:true, accept:'.xlsx,.xls,.csv'},
+  invoice:{title:'이번 달 청구서', hint:'세부내역 엑셀/CSV · 시트 여러 개 가능', req:true, multi:true, accept:'.xlsx,.xls,.csv'},
+  summary:{title:'청구서 요약 · 총액', hint:'PDF 또는 엑셀 · 항목별 금액·총액 대사 (선택)', req:false, multi:true, accept:'.pdf,.xlsx,.xls,.csv'},
+  ship:{title:'우리 출고 내역', hint:'주문번호·채널(B2B/B2C)·수량 · 브라우저에 저장돼요', req:false, multi:true, accept:'.xlsx,.xls,.csv'},
   prev:{title:'이전 달 청구서', hint:'중복 청구·크레딧 확인용 (여러 개 가능)', req:false, multi:true, accept:'.xlsx,.xls,.csv'}
 };
 /* 탭(업체)별 상태: 파일·결과는 메모리, 업체 설정·요율표는 브라우저에 저장 */
@@ -360,8 +375,8 @@ function newTab(id, defaults){
   let rates = saved?.rates;
   if (!rates && id==='0') rates = lsGet('cgetc_rates_v1', null); // 이전 버전 요율표 이어받기
   const def = defaults || TAB_DEFAULTS[id] || {vendorName:'새 업체', tolPct:'1', currency:'USD', mailLang:'en', toName:'', fromName:'Donghyun Shin'};
-  return { id, files:{invoice:[],ship:[],prev:[]}, pdfName:'', pdfCands:'', issues:[], filter:'ALL', invRows:[], ran:false, emailOpen:false,
-    form:{...def, ...(saved?.form||{}), invNo:'', invPeriod:'', pdfTotal:''}, rates: rates || [], rateNotes: saved?.rateNotes || [] };
+  return { id, files:{invoice:[],ship:[],prev:[]}, sumSrc:[], sumNote:'', loading:{}, pdfCands:'', issues:[], filter:'ALL', invRows:[], ran:false, emailOpen:false,
+    form:{...def, ...(saved?.form||{}), invNo:'', invPeriod:'', pdfTotal:''}, rates: rates || [], rateNotes: saved?.rateNotes || [], mapMem: saved?.mapMem || {} };
 }
 let tabIds = lsGet('audit_tab_ids', null);
 if (!Array.isArray(tabIds) || !tabIds.length) tabIds = ['0','1','2'];
@@ -371,7 +386,7 @@ let state = TABS[curTab];
 function persistIds(){ lsSet('audit_tab_ids', TABS.map(t=>t.id)); lsSet('audit_cur_tab', state.id); }
 function persistTab(i){
   const t = TABS[i];
-  lsSet('audit_tab_'+t.id, {form:Object.fromEntries(KEEP_FIELDS.map(k=>[k,t.form[k]])), rates:t.rates, rateNotes:t.rateNotes||[]});
+  lsSet('audit_tab_'+t.id, {form:Object.fromEntries(KEEP_FIELDS.map(k=>[k,t.form[k]])), rates:t.rates, rateNotes:t.rateNotes||[], mapMem:t.mapMem||{}});
 }
 function saveForm(){ FORM_FIELDS.forEach(id=>state.form[id] = $(id).value); state.pdfCands = $('pdfCands').classList.contains('hidden') ? '' : $('pdfCands').innerHTML; persistTab(curTab); }
 function loadForm(){
@@ -430,6 +445,7 @@ function deleteTab(i){
   clearTimeout(delTimer); delArmed = -1;
   const [gone] = TABS.splice(i,1);
   try{ localStorage.removeItem('audit_tab_'+gone.id); }catch(e){}
+  IDB.del('ship_'+gone.id);
   curTab = -1; switchTab(Math.min(i, TABS.length-1), true);
   toast(`"${gone.form.vendorName}" 탭을 삭제했어요`);
 }
@@ -445,6 +461,22 @@ function switchTab(i, skipSave){
 }
 
 /* ========== 파일 읽기 ========== */
+// 서식만 있는 빈 셀이 수십만 행 붙은 엑셀(예: 작업일지)은 빈 셀을 걷어내고 읽는다
+function slimXlsx(u8){
+  try{
+    const zip = XLSX.CFB.read(u8, {type:'array'});
+    let changed = false;
+    zip.FileIndex.forEach((fi, i) => {
+      if (!/\/xl\/worksheets\/[^/]+\.xml$/i.test(zip.FullPaths[i]) || !fi.content || fi.content.length < 1e6) return;
+      let x = new TextDecoder().decode(fi.content); const before = x.length;
+      x = x.replace(/<c r="[A-Z]+\d+"(?: s="\d+")?(?: t="\w+")?\/>/g, '').replace(/<row [^>]*?(?:\/>|><\/row>)/g, '');
+      let last = 0; const re = /<row r="(\d+)"/g; let m; while ((m = re.exec(x))) last = +m[1];
+      x = x.replace(/<dimension ref="([A-Z]+\d+):([A-Z]+)(\d+)"\s*\/>/, (s, a, c2, r2) => `<dimension ref="${a}:${c2}${Math.max(1, Math.min(+r2, last || +r2))}"/>`);
+      if (x.length < before){ fi.content = new TextEncoder().encode(x); fi.size = fi.content.length; changed = true; }
+    });
+    return changed ? XLSX.CFB.write(zip, {fileType:'zip', type:'array'}) : null;
+  }catch(e){ console.warn('빈 셀 정리 실패, 원본으로 읽어요', e); return null; }
+}
 async function readWorkbook(file){
   const buf = await file.arrayBuffer();
   if (/\.(csv|txt)$/i.test(file.name)) {
@@ -453,9 +485,17 @@ async function readWorkbook(file){
     catch(e){ text = new TextDecoder('euc-kr').decode(buf); }
     return XLSX.read(text.replace(/^﻿/,''),{type:'string',cellDates:true});
   }
-  return XLSX.read(buf,{type:'array',cellDates:true});
+  let data = new Uint8Array(buf);
+  if (/\.xlsx$/i.test(file.name) && buf.byteLength > 2e6) data = slimXlsx(data) || data;
+  return XLSX.read(data,{type:'array',cellDates:true});
 }
 function aoaOf(ws){ return XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:''}); }
+function sheetsOf(wb){
+  const out = {};
+  wb.SheetNames.forEach(sn => { const aoa = rcFillMerges(wb.Sheets[sn], aoaOf(wb.Sheets[sn])); if (aoa.some(r => r && r.some(v => String(v ?? '').trim()))) out[sn] = aoa; });
+  return out;
+}
+const curCode = v => { const s = String(v ?? '').trim().toUpperCase(); return /^[A-Z]{3}$/.test(s) ? s : rcCur(s); };
 
 function detectHeader(aoa, fields){
   let best = {row:0, score:-1};
@@ -468,15 +508,33 @@ function detectHeader(aoa, fields){
   }
   return best;
 }
+// 머리글이 두 줄이면(위: 묶음, 아래: 세부) 합쳐서 한 줄로 본다
+function headerAt(aoa, hr){
+  const clean = v => String(v ?? '').replace(/\s+/g,' ').trim();
+  const top = (aoa[hr]||[]).map(clean), nx = aoa[hr+1] || [], sub = nx.map(clean);
+  const subs = sub.filter((s,c) => s && s !== top[c]).length;
+  const nums = nx.filter(v => typeof v === 'number' || v instanceof Date).length;
+  if (subs >= 2 && !nums && (aoa[hr+2]||[]).some(v => clean(v))){
+    const w = Math.max(top.length, sub.length);
+    const headers = Array.from({length:w}, (_,c) => {
+      const t = top[c] || '', s = sub[c] || '';
+      if (!s || s === t) return t; if (!t) return s;
+      return /^(금액|조건|가로|세로|높이|단가|수량|합계|amount|qty|rate)/i.test(s) ? `${t} ${s}` : s;
+    });
+    return {headers, last:hr+1};
+  }
+  return {headers:top, last:hr};
+}
 function autoMap(headers, fields){
   const H = headers.map(nh);
   const cand = [];
   for (const [f] of fields){
-    H.forEach((h,ci)=>{
-      if (!h) return;
+    H.forEach((h0,ci)=>{
+      if (!h0) return;
+      const h = h0.replace(/\d+$/,'') || h0;
       let s = 0;
-      if (SYN_N[f].includes(h)) s = 3;
-      else if (SYN_N[f].some(x => x.length>=3 && (h.includes(x)))) s = 1;
+      if (SYN_N[f].includes(h0) || SYN_N[f].includes(h)) s = 3;
+      else if (SYN_N[f].some(x => (x.length>=3 && h.includes(x)) || (x.length===2 && /^[가-힣]{2}$/.test(x) && h.endsWith(x)))) s = 1;
       if (s) cand.push({f,ci,s});
     });
   }
@@ -486,54 +544,185 @@ function autoMap(headers, fields){
   for (const [f] of fields) if (map[f]===undefined) map[f] = -1;
   return map;
 }
-function buildFileEntry(name, sheets, ds){
-  const fields = FIELDS[ds];
-  let best = null;
-  for (const [sn, aoa] of Object.entries(sheets)){
-    const d = detectHeader(aoa, fields);
-    if (!best || d.score > best.score) best = {sheet:sn, row:d.row, score:d.score};
+/* 일자별 집계표: TOTAL·단가·금액 줄이 있는 시트 → 열마다 한 항목 */
+function detectPivot(aoa){
+  const c0 = r => String(aoa[r]?.[0] ?? '').replace(/\s+/g,'').toLowerCase();
+  for (let r = 1; r < aoa.length; r++){
+    if (!/^(total|합계|계|소계)$/.test(c0(r))) continue;
+    let rr = -1, ar = -1;
+    for (let k = r+1; k <= r+3 && k < aoa.length; k++){ if (/^(단가|unitprice|rate)$/.test(c0(k))) rr = k; if (/^(금액|amount)$/.test(c0(k))) ar = k; }
+    if (ar < 0) continue;
+    const first = aoa.findIndex(row => typeof row?.[0] === 'number' || row?.[0] instanceof Date);
+    if (first < 1 || first > r) continue;
+    const hdr = aoa.slice(Math.max(0, first-3), first);
+    const w = Math.max((aoa[ar]||[]).length, ...hdr.map(h => h.length));
+    const rows = [];
+    for (let c = 1; c < w; c++){
+      const parts = [...new Set(hdr.map(h => String(h[c] ?? '').replace(/\s+/g,' ').trim()).filter(Boolean))];
+      const amount = num(aoa[ar][c]);
+      if (!parts.length || isNaN(amount) || !amount) continue;
+      rows.push({chargeType:parts.join(' '), group:parts[0], qty:aoa[r]?.[c] ?? '', rate: rr >= 0 ? aoa[rr]?.[c] ?? '' : '', amount, _row:ar+1});
+    }
+    if (rows.length) return rows;
   }
-  const e = {name, sheets, sheet:best.sheet, headerRow:best.row};
-  e.headers = (sheets[e.sheet][e.headerRow]||[]).map(String);
-  e.map = autoMap(e.headers, fields);
+  return null;
+}
+/* 한 줄에 금액 열이 여러 개(해외배송비·유류할증료…)면 열마다 청구 항목으로 나눠 읽는다 */
+const WIDE_IN = /(비|료|수수료|운임|요금|금액|fee|charge|surcharge|cost|amount|freight|duty|tax|관세|소비세)/i;
+const WIDE_OUT = /(총\s*합계|합계|total|정산|단가|rate|무게|중량|weight|수량|qty|환종|통화|currency|부피|가로|세로|높이|\bcm\b|번호|날짜|일자|date|조건|결제|기간|period)/i;
+function wideCands(e){
+  const used = new Set(Object.entries(e.map).filter(([f,c]) => c >= 0 && f !== 'amount').map(([,c]) => c));
+  const body = e.sheets[e.sheet].slice(e.headerRow+1, e.headerRow+50000);
+  return e.headers.map((h,c) => ({c, h:String(h||'').trim()})).filter(({c,h}) => h && !used.has(c) && body.some(r => typeof r?.[c] === 'number' && r[c] !== 0));
+}
+function wideCol(e, c){
+  const h = String(e.headers[c] || '').trim();
+  let curCol = -1;
+  for (let k = c-1; k >= Math.max(0, c-2); k--) if (/환종|통화|currency/i.test(e.headers[k] || '')) { curCol = k; break; }
+  const m = h.match(/\((krw|jpy|usd|eur|원|엔)\)/i);
+  return {c, label:h.replace(/\((krw|jpy|usd|eur|원|엔)\)/gi,'').replace(/\s+/g,' ').trim() || h, cur: m ? ({'원':'KRW','엔':'JPY'})[m[1]] || m[1].toUpperCase() : '', curCol};
+}
+// 청구 항목 열이 확실하면(동의어와 정확히 일치) 나누지 않는다. "서비스구분"처럼 애매하면 금액 열 나누기를 우선
+function autoWide(e){
+  const ct = e.map.chargeType;
+  if (ct >= 0 && SYN_N.chargeType.includes(nh(e.headers[ct]))) return [];
+  const save = e.map.chargeType; e.map.chargeType = -1;
+  const cs = wideCands(e).filter(({h}) => WIDE_IN.test(h) && !WIDE_OUT.test(h));
+  if (cs.length < 2){ e.map.chargeType = save; return []; }
+  return cs.map(({c}) => wideCol(e, c));
+}
+const SUMMARY_SHEET = /청구서|invoice|표지|cover|요약|summary/i;
+const isSummaryLike = e => e.kind !== 'pivot' && (e.headers.some(h => /공급가액|부가세|세액/.test(h)) || (SUMMARY_SHEET.test(e.sheetName) && !/세부|상세|detail/i.test(e.sheetName)));
+const sheetType = sn => /^(sheet|시트)\s*\d*$/i.test(String(sn).trim()) ? '' : String(sn).trim();
+function setHeader(e, ds, hr){
+  const h = headerAt(e.sheets[e.sheet], hr);
+  e.hdrTop = hr; e.headerRow = h.last; e.headers = h.headers.map(String);
+  e.map = autoMap(e.headers, FIELDS[ds]);
+  const inv = ds === 'invoice' || ds === 'prev';
+  e.defType = inv && e.map.chargeType < 0 && e.map.desc < 0 ? sheetType(e.sheetName) : '';
+  e.wide = inv ? autoWide(e) : [];
+}
+function sheetEntry(file, sn, aoa, ds, multi){
+  const e = {file, sheetName:sn, name: multi ? `${file} · ${sn}` : file, sheets:{[sn]:aoa}, sheet:sn, use:true, kind:'table', defType:'', wide:[], headers:[], map:{}, headerRow:0, hdrTop:0};
+  const piv = ds !== 'ship' ? detectPivot(aoa) : null;
+  if (piv){ e.kind = 'pivot'; e.pivotRows = piv; FIELDS[ds].forEach(([f]) => e.map[f] = -1); e.score = 9; }
+  else { const d = detectHeader(aoa, FIELDS[ds]); setHeader(e, ds, d.row); e.score = d.score; }
+  e.sig = sigOf(ds, e);
   return e;
 }
-function setSheet(e, ds, sn){
-  e.sheet = sn;
-  const d = detectHeader(e.sheets[sn], FIELDS[ds]);
-  e.headerRow = d.row;
-  e.headers = (e.sheets[sn][d.row]||[]).map(String);
-  e.map = autoMap(e.headers, FIELDS[ds]);
+function buildFileEntries(file, sheets, ds){
+  const names = Object.keys(sheets);
+  const multi = names.length > 1;
+  const es = names.map(sn => sheetEntry(file, sn, sheets[sn], ds, multi));
+  if (ds === 'ship'){ const best = es.reduce((a,b) => b.score > a.score ? b : a, es[0]); es.forEach(e => e.use = e === best); }
+  else es.forEach(e => { e.use = multi ? (!isSummaryLike(e) && missingOf(e, ds).length === 0 && extractRows(e, ds).length > 0) : !isSummaryLike(e) || missingOf(e, ds).length === 0; });
+  es.forEach(e => { const mem = state.mapMem?.[ds]?.[e.sig]; if (mem) applyMem(e, ds, mem); });
+  return es;
 }
+function buildFileEntry(name, sheets, ds){ return buildFileEntries(name, sheets, ds)[0]; }
+
+/* 컬럼 매핑 기억: 업체 탭마다, 머리글 모양이 같은 시트에 다시 적용 */
+const sigOf = (ds, e) => (ds + '|' + (e.kind === 'pivot' ? 'pivot|' + e.sheetName : e.headers.map(nh).filter(Boolean).join(','))).slice(0, 600);
+function applyMem(e, ds, mem){
+  if (e.kind !== 'pivot'){
+    if (typeof mem.hdrTop === 'number' && mem.hdrTop !== e.hdrTop && mem.hdrTop < e.sheets[e.sheet].length) setHeader(e, ds, mem.hdrTop);
+    Object.keys(e.map).forEach(f => { if (mem.map && typeof mem.map[f] === 'number' && mem.map[f] < e.headers.length) e.map[f] = mem.map[f]; });
+    if (typeof mem.defType === 'string') e.defType = mem.defType;
+    if (Array.isArray(mem.wide)) e.wide = mem.wide.filter(w => w.c < e.headers.length);
+  }
+  e.use = mem.use !== false; e.mem = true;
+}
+function remember(ds, e){
+  if (!state.mapMem) state.mapMem = {};
+  const m = state.mapMem[ds] || (state.mapMem[ds] = {});
+  m[e.sig] = {use:e.use, map:{...e.map}, defType:e.defType, wide:e.wide, hdrTop:e.hdrTop, at:Date.now()};
+  const ks = Object.keys(m);
+  if (ks.length > 40) ks.sort((a,b) => m[a].at - m[b].at).slice(0, ks.length - 40).forEach(k => delete m[k]);
+  persistTab(curTab);
+}
+
+/* 우리 출고 내역은 브라우저(IndexedDB)에 탭별로 저장 */
+const IDB = (() => {
+  let p;
+  const open = () => p || (p = new Promise((res, rej) => { const r = indexedDB.open('invoice-audit', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }));
+  const tx = (mode, fn) => open().then(db => new Promise((res, rej) => { const t = db.transaction('kv', mode); const q = fn(t.objectStore('kv')); t.oncomplete = () => res(q && q.result); t.onerror = () => rej(t.error); }));
+  return {get: k => tx('readonly', s => s.get(k)).catch(() => undefined), set: (k, v) => tx('readwrite', s => s.put(v, k)).catch(e => { console.warn(e); toast('출고 내역을 저장하지 못했어요 (브라우저 저장 공간 확인)'); }), del: k => tx('readwrite', s => s.delete(k)).catch(() => {})};
+})();
+function saveShip(tab = state){
+  if (!tab.files.ship.length){ IDB.del('ship_' + tab.id); tab.shipSavedAt = 0; return; }
+  tab.shipSavedAt = Date.now();
+  IDB.set('ship_' + tab.id, {at:tab.shipSavedAt, entries:tab.files.ship.map(e => ({...e, pivotRows:undefined}))});
+}
+function loadSavedShip(){
+  TABS.forEach(t => IDB.get('ship_' + t.id).then(v => {
+    if (!v || !Array.isArray(v.entries) || t.files.ship.length) return;
+    t.files.ship = v.entries; t.shipSavedAt = v.at || 0;
+    if (t === state) renderUploads();
+  }));
+}
+
+function addLoading(ds, on){ state.loading = state.loading || {}; state.loading[ds] = on; renderUploads(); }
 async function addFiles(ds, fileList){
+  const tabAtStart = curTab;
+  addLoading(ds, true);
   for (const f of fileList){
     try{
-      const wb = await readWorkbook(f);
-      const sheets = {};
-      wb.SheetNames.forEach(sn => sheets[sn] = aoaOf(wb.Sheets[sn]));
-      const e = buildFileEntry(f.name, sheets, ds);
-      if (!DS_META[ds].multi) state.files[ds] = [];
-      state.files[ds].push(e);
+      const sheets = sheetsOf(await readWorkbook(f));
+      if (curTab !== tabAtStart) break;
+      const es = buildFileEntries(f.name, sheets, ds);
+      if (!es.length){ toast(`${f.name}: 읽을 표가 없어요`); continue; }
+      state.files[ds] = state.files[ds].filter(e => e.file !== f.name).concat(es);
+      if (ds === 'invoice') autoSummary(f.name, sheets, es);
     }catch(err){ console.error(err); toast(`${f.name} 읽기 실패`); }
   }
-  renderUploads();
+  if (curTab !== tabAtStart){ toast('탭이 바뀌어 파일 올리기를 취소했어요. 다시 올려 주세요'); TABS[tabAtStart].loading = {}; return; }
+  if (ds === 'ship') saveShip();
+  addLoading(ds, false);
 }
+const usedEntries = ds => state.files[ds].filter(e => e.use);
+function missingOf(e, ds){
+  if (e.kind === 'pivot') return [];
+  if (ds === 'ship') return e.map.orderId < 0 && e.map.tracking < 0 ? ['주문번호 또는 송장번호'] : [];
+  const out = [];
+  if (e.map.amount < 0 && !e.wide.length) out.push('금액');
+  if (e.map.chargeType < 0 && e.map.desc < 0 && !e.defType && !e.wide.length) out.push('청구 항목');
+  return out;
+}
+const SUBTOTAL_RE = /(^|[\s,])(sub\s*total|grand\s*total|total|합\s*계|소\s*계|총\s*계)\s*:?\s*$/i;
 function extractRows(e, ds){
+  if (e.kind === 'pivot') return e.pivotRows.map(p => {
+    const o = {_file:e.name, _sheet:e.sheetName, _raw:null};
+    FIELDS[ds].forEach(([f]) => o[f] = '');
+    return Object.assign(o, p);
+  });
   const aoa = e.sheets[e.sheet]; const m = e.map; const out = [];
   const g = (row,f) => m[f] >= 0 ? row[m[f]] : '';
+  const inv = ds === 'invoice' || ds === 'prev';
+  let grp = '';
   for (let r = e.headerRow+1; r < aoa.length; r++){
-    const row = aoa[r]; if (!row || row.every(c => c===''||c===null)) continue;
-    const o = {_file:e.name, _row:r+1, _raw:row};
+    const row = aoa[r]; if (!row || row.every(c => c===''||c===null||c===undefined)) continue;
+    const o = {_file:e.name, _sheet:e.sheetName, _row:r+1, _raw:row};
     for (const [f] of FIELDS[ds]) o[f] = g(row,f);
-    const noId = !String(o.orderId ?? '').trim();
-    if (noId && row.some(c => /^\s*(sub\s*total|grand\s*total|total|invoice\s*total|합계|소계|총계)\s*:?\s*$/i.test(String(c)))) continue;
-    if ((ds==='invoice'||ds==='prev') && noId && !String(o.chargeType ?? '').trim() && !String(o.desc ?? '').trim()) continue;
+    const has = f => String(o[f] ?? '').trim() !== '';
+    if (!has('orderId') && row.some(c => typeof c === 'string' && SUBTOTAL_RE.test(c.trim()))) continue;
+    if (!inv){ if (has('orderId') || has('tracking')) out.push(o); continue; }
+    if (m.group >= 0){ if (has('group')) grp = String(o.group).trim(); else o.group = grp; }
+    if (!has('orderId') && !has('tracking') && !has('chargeType') && !has('desc')) continue;
+    o._cur = m.currency >= 0 ? curCode(o.currency) : '';
+    if (!has('chargeType') && !has('desc') && e.defType) o.chargeType = e.defType;
+    if (e.wide.length){
+      e.wide.forEach(w => {
+        const a = num(row[w.c]); if (isNaN(a) || !a) return;
+        out.push({...o, chargeType:w.label, amount:a, rate:'', qty:1, _cur: w.cur || (w.curCol >= 0 ? curCode(row[w.curCol]) : '') || o._cur, _wide:true});
+      });
+      continue;
+    }
     out.push(o);
   }
   return out;
 }
 
-/* ========== PDF ========== */
+/* ========== 청구서 요약 (PDF·엑셀) ========== */
 let pdfReady = false;
 function initPdf(){
   if (pdfReady || typeof pdfjsLib === 'undefined') return;
@@ -544,113 +733,224 @@ function initPdf(){
     pdfReady = true;
   }catch(e){ console.error(e); }
 }
-async function readPdf(file){
-  initPdf();
-  const doc = await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
-  const lines = [];
-  for (let p=1;p<=doc.numPages;p++){
-    const tc = await (await doc.getPage(p)).getTextContent();
-    const byY = new Map();
-    tc.items.forEach(it=>{
-      const y = Math.round(it.transform[5]);
-      let key = [...byY.keys()].find(k=>Math.abs(k-y)<=2); if (key===undefined) key=y;
-      if (!byY.has(key)) byY.set(key,[]);
-      byY.get(key).push({x:it.transform[4], s:it.str});
-    });
-    [...byY.entries()].sort((a,b)=>b[0]-a[0]).forEach(([,arr])=>{
-      lines.push(arr.sort((a,b)=>a.x-b.x).map(o=>o.s).join(' ').replace(/\s+/g,' ').trim());
-    });
-  }
-  return lines.filter(Boolean);
-}
 function findPdfTotals(lines){
-  const PRI = [/amount\s*due|balance\s*due|total\s*due/i, /grand\s*total|invoice\s*total|total\s*amount/i, /\btotal\b|합계|총액/i];
-  const NUMRE = /\(?-?\$?\s?[\d,]+\.\d{2}\)?/g;
+  const PRI = [/amount\s*due|balance\s*due|total\s*due/i, /grand\s*total|invoice\s*total|total\s*amount/i, /\btotal\b|합\s*계|총\s*액/i];
+  const NUMRE = /\(?-?[$₩¥]?\s?[\d,]+(?:\.\d{2})?\)?/g;
   const cands = [];
   lines.forEach((ln,i)=>{
     PRI.forEach((re,pi)=>{
       if (!re.test(ln)) return;
       if (/sub\s*total/i.test(ln) && pi===2) return;
-      let nums = ln.match(NUMRE);
-      if (!nums && lines[i+1]) nums = lines[i+1].match(NUMRE);
-      if (nums) cands.push({pri:pi, idx:i, line:ln, value:num(nums[nums.length-1])});
+      let nums = (ln.match(NUMRE) || []).filter(s => /\d{3}/.test(s));
+      if (!nums.length && lines[i+1]) nums = (lines[i+1].match(NUMRE) || []).filter(s => /\d{3}/.test(s));
+      if (nums.length) cands.push({pri:pi, idx:i, line:ln, value:num(nums[nums.length-1])});
     });
   });
   const seen = new Set();
   return cands.filter(c=>{const k=c.idx; if(seen.has(k))return false; seen.add(k); return !isNaN(c.value);})
               .sort((a,b)=>a.pri-b.pri || b.idx-a.idx);
 }
-async function handlePdf(file){
+function sumRole(h){
+  const s = String(h ?? '').replace(/\s+/g,'').toLowerCase();
+  if (!s || s.length > 20) return '';
+  if (/^(no\.?|번호|순번|#)$/.test(s)) return 'no';
+  if (/부가세|세액|vat|tax/.test(s)) return 'vat';
+  if (/환종|통화|currency/.test(s)) return 'cur';
+  if (/비고|remark|note|메모/.test(s)) return 'memo';
+  if (/수량|qty|quantity|건수/.test(s)) return 'qty';
+  if (/단가|unitprice|^rate$|요율/.test(s)) return 'rate';
+  if (/공급가액|금액|amount|청구액/.test(s)) return 'amount';
+  if (/^(합계|total|계)$/.test(s)) return 'total';
+  if (/^(구분|분류|category)$/.test(s)) return 'group';
+  if (/품명|품목|항목|내역|내용|서비스|description|item|service|작업/.test(s)) return 'item';
+  if (/날짜|일자|date/.test(s)) return 'date';
+  return '';
+}
+const SUM_TOTAL_RE = /합\s*계|소\s*계|총\s*계|\btotal\b|청\s*구\s*금\s*액|amount\s*due/i;
+/* 머리글(품명·수량·단가·금액…)이 있는 요약표 → 항목별 금액 */
+function sumFromAoa(aoa){
+  let hr = -1, R = null;
+  for (let r = 0; r < Math.min(aoa.length, 60) && hr < 0; r++){
+    const roles = (aoa[r]||[]).map(sumRole);
+    if ((roles.includes('item') || roles.includes('group')) && (roles.includes('amount') || roles.includes('total'))){ hr = r; R = roles; }
+  }
+  if (hr < 0) return {lines:[], totals:[]};
+  const col = k => R.indexOf(k);
+  const ci = col('item'), cg = col('group'), cq = col('qty'), cr = col('rate'), cv = col('vat'), cc = col('cur'), cm = col('memo');
+  const ca = col('amount') >= 0 ? col('amount') : col('total');
+  const S = (row, c) => c >= 0 ? String(row[c] ?? '').replace(/\s+/g,' ').trim() : '';
+  const lines = [], totals = [];
+  let grp = '';
+  for (let r = hr+1; r < aoa.length; r++){
+    const row = aoa[r] || [];
+    const amt = num(row[ca]);
+    let label = S(row, ci); const g = S(row, cg);
+    if (cg >= 0 && g) grp = g;
+    const anyText = row.map(v => typeof v === 'string' ? v.replace(/\s+/g,' ').trim() : '').find(Boolean) || '';
+    const text = label || g || anyText;
+    if (!text && isNaN(amt)) continue;
+    if (SUM_TOTAL_RE.test(text) && (!label || SUM_TOTAL_RE.test(label))){ if (!isNaN(amt)) totals.push({label:text, amount:amt, row:r+1}); continue; }
+    if (totals.length && isNaN(amt)) break;
+    if (!label) label = g;
+    if (!label || label.length > 40 || /^[*※]/.test(label)) continue;
+    lines.push({label, group: label === g ? '' : grp, qty:num(row[cq]), rate:num(row[cr]), amount: isNaN(amt) ? 0 : amt, blank:isNaN(amt), vat:num(row[cv]), cur: cc >= 0 ? curCode(row[cc]) : '', memo:S(row, cm), row:r+1});
+  }
+  return {lines, totals};
+}
+function summaryFromSheets(file, sheets, only){
+  let best = null;
+  Object.entries(sheets).forEach(([sn, aoa]) => {
+    if (only && !only.includes(sn)) return;
+    const s = sumFromAoa(aoa); if (!s.lines.length) return;
+    const score = s.lines.length + (SUMMARY_SHEET.test(sn) ? 100 : 0) + (s.totals.length ? 10 : 0);
+    if (!best || score > best.score) best = {...s, sn, score};
+  });
+  if (!best) return null;
+  const many = Object.keys(sheets).length > 1;
+  return {name: many ? `${file} · ${best.sn}` : file, file, lines:best.lines, totals:best.totals, cands:[], text:''};
+}
+async function summaryFromPdf(f){
+  const pages = await rcPdfPages(f);
+  const text = [], lines = [], totals = [];
+  pages.forEach(pg => {
+    const toks = rcMergeToks(pg.toks);
+    rcLines(toks).forEach(l => text.push(l.toks.map(t => t.s).join(' ')));
+    rcPdfGrids(toks, new Set(), sumRole, 'amount', rs => (rs.has('item') || rs.has('group')) && (rs.has('amount') || rs.has('total')))
+      .forEach(g => { const s = sumFromAoa([g.cols.map(c => c.name), ...g.rows]); lines.push(...s.lines); totals.push(...s.totals); });
+  });
+  if (!text.length) throw new Error('글자가 없는 PDF(스캔본)예요');
+  return {name:f.name, file:f.name, lines, totals, cands:findPdfTotals(text), text:text.join('\n')};
+}
+function autoSummary(file, sheets, es){
+  const names = es.filter(e => !e.use && isSummaryLike(e)).map(e => e.sheetName);
+  if (!names.length) return;
+  const src = summaryFromSheets(file, sheets, names); if (!src) return;
+  src.auto = true;
+  state.sumSrc = (state.sumSrc || []).filter(s => s.file !== file).concat(src);
+  applySummary();
+  toast(`"${src.name.split(' · ').pop()}" 시트를 청구서 요약으로 읽었어요`);
+}
+async function addSummary(files){
   const tabAtStart = curTab;
-  try{
-    const lines = await readPdf(file);
-    if (curTab !== tabAtStart){ toast('탭이 바뀌어 PDF 적용을 취소했어요. 다시 올려 주세요'); return; }
-    state.pdfName = file.name;
-    const cands = findPdfTotals(lines);
-    const inv = lines.join('\n').match(/invoice\s*(?:no|number|#)\.?\s*[:#]?\s*([A-Z0-9][A-Z0-9\-\/]{2,})/i);
-    if (inv && !$('invNo').value) $('invNo').value = inv[1];
-    const box = $('pdfCands');
-    if (cands.length){
-      $('pdfTotal').value = cands[0].value.toFixed(2);
-      box.innerHTML = `PDF에서 찾은 총액 후보: ` + cands.slice(0,5).map(c=>`<button class="btn sm" data-v="${c.value}" title="${esc(c.line)}">${money(c.value)}</button>`).join(' ') + ` <span>(클릭하면 적용)</span>`;
-      box.querySelectorAll('button').forEach(b=>b.onclick=()=>{ $('pdfTotal').value = (+b.dataset.v).toFixed(2); });
-    } else {
-      box.textContent = 'PDF에서 총액을 찾지 못했어요. PDF 총액 칸에 직접 입력해 주세요.';
-    }
-    box.classList.remove('hidden');
-  }catch(e){ console.error(e); toast('PDF 읽기 실패. 총액을 직접 입력해 주세요'); state.pdfName = file.name+' (읽기 실패)'; }
-  renderUploads();
+  addLoading('summary', true);
+  for (const f of files){
+    try{
+      const src = /\.pdf$/i.test(f.name) ? await summaryFromPdf(f) : summaryFromSheets(f.name, sheetsOf(await readWorkbook(f)));
+      if (curTab !== tabAtStart) break;
+      if (!src || (!src.lines.length && !src.cands.length)){ toast(`${f.name}: 항목·금액을 찾지 못했어요. 총액을 직접 입력해 주세요`); continue; }
+      state.sumSrc = (state.sumSrc || []).filter(s => s.file !== f.name).concat(src);
+    }catch(err){ console.error(err); toast(`${f.name} 읽기 실패: ${err.message || err}`); }
+  }
+  if (curTab !== tabAtStart){ TABS[tabAtStart].loading = {}; return; }
+  applySummary();
+  addLoading('summary', false);
+}
+const sumLines = () => (state.sumSrc || []).flatMap(s => s.lines.map(l => ({...l, _src:s.name})));
+function applySummary(){
+  const tab = $('currency').value, srcs = state.sumSrc || [];
+  const box = $('pdfCands');
+  if (!srcs.length){ box.classList.add('hidden'); return; }
+  const lineSum = r2(sumLines().filter(l => !l.cur || l.cur === tab).reduce((a,l) => a + l.amount, 0));
+  const cands = [];
+  if (sumLines().length) cands.push({label:'항목 합계(부가세 제외)', value:lineSum});
+  srcs.forEach(s => { s.totals.forEach(t => cands.push({label:t.label, value:t.amount})); s.cands.slice(0,4).forEach(c => cands.push({label:c.line, value:c.value})); });
+  const uniq = []; cands.forEach(c => { if (!uniq.some(u => Math.abs(u.value - c.value) < 0.005)) uniq.push(c); });
+  if (uniq.length) $('pdfTotal').value = String(uniq[0].value);
+  const text = srcs.map(s => s.text).join('\n');
+  const inv = text.match(/(?:invoice\s*(?:no|number|#)\.?|문서\s*번호|청구\s*번호|일련\s*번호)\s*[:#]?\s*([A-Z0-9][A-Z0-9\-\/]{2,})/i);
+  if (inv && !$('invNo').value) $('invNo').value = inv[1];
+  box.innerHTML = uniq.length ? `요약 총액 후보: ` + uniq.slice(0,6).map(c => `<button class="btn sm" data-v="${c.value}" title="${esc(c.label)}">${esc(c.label.length > 14 ? c.label.slice(0,13)+'…' : c.label)} ${money(c.value)}</button>`).join(' ') + ` <span>(클릭하면 적용)</span>` : '요약에서 총액을 찾지 못했어요. 요약 총액 칸에 직접 입력해 주세요.';
+  box.querySelectorAll('button[data-v]').forEach(b => b.onclick = () => { $('pdfTotal').value = String(+b.dataset.v); state.form.pdfTotal = $('pdfTotal').value; });
+  box.classList.remove('hidden');
+  state.form.pdfTotal = $('pdfTotal').value;
 }
 
 /* ========== 업로드 UI ========== */
 function renderUploads(){
   const g = $('uploadGrid'); g.innerHTML = '';
   for (const [ds, meta] of Object.entries(DS_META)){
-    const c = document.createElement('div'); c.className='card'; c.style.boxShadow='none';
+    const c = document.createElement('div'); c.className='card'; c.style.boxShadow='none'; c.style.minWidth='0';
+    const busy = state.loading?.[ds];
     c.innerHTML = `<div class="row" style="justify-content:space-between"><h3>${meta.title}</h3><span class="tag ${meta.req?'req':''}">${meta.req?'필수':'선택'}</span></div>
       <div class="muted" style="font-size:12px;margin-top:2px">${meta.hint}</div>
-      <label class="drop">파일을 끌어다 놓거나 클릭<input type="file" ${meta.multi?'multiple':''} accept="${meta.accept}"></label>
+      <label class="drop ${busy?'busy':''}">${busy?'파일 읽는 중…':'파일을 끌어다 놓거나 클릭'}<input type="file" ${meta.multi?'multiple':''} accept="${meta.accept}"></label>
       <ul class="filelist"></ul>`;
     const drop = c.querySelector('.drop'), inp = c.querySelector('input');
-    const go = files => ds==='pdf' ? (files[0] && handlePdf(files[0])) : addFiles(ds, files);
+    const go = files => { if (!files.length) return; ds === 'summary' ? addSummary(files) : addFiles(ds, files); };
     inp.onchange = () => { go([...inp.files]); inp.value=''; };
     drop.ondragover = ev => { ev.preventDefault(); drop.classList.add('over'); };
     drop.ondragleave = () => drop.classList.remove('over');
     drop.ondrop = ev => { ev.preventDefault(); drop.classList.remove('over'); go([...ev.dataTransfer.files]); };
     const ul = c.querySelector('.filelist');
-    if (ds === 'pdf'){
-      if (state.pdfName) ul.innerHTML = `<li><span class="name">${esc(state.pdfName)}</span><button class="btn sm" data-x>삭제</button></li>`;
-      const x = ul.querySelector('[data-x]'); if (x) x.onclick = ()=>{ state.pdfName=''; $('pdfCands').classList.add('hidden'); renderUploads(); };
-    } else {
-      state.files[ds].forEach((e,i)=>{
-        const li = document.createElement('li'); li.style.flexDirection='column';
-        const n = extractRows(e, ds).length;
-        const missing = FIELDS[ds].filter(([f,,req])=>req && e.map[f]<0).map(([,l])=>l);
-        li.innerHTML = `<div class="row" style="justify-content:space-between;flex-wrap:nowrap"><span class="name" title="${esc(e.name)}">${esc(e.name)}</span><span class="row" style="flex-wrap:nowrap"><span class="muted">${n}행</span><button class="btn sm" data-x>삭제</button></span></div>
-          ${missing.length?`<div style="color:var(--danger);font-size:12px">매핑 필요: ${missing.join(', ')}</div>`:''}
-          <details class="map" ${missing.length?'open':''}><summary>컬럼 매핑 확인</summary><div class="mapgrid"></div></details>`;
-        li.querySelector('[data-x]').onclick = ()=>{ state.files[ds].splice(i,1); renderUploads(); };
-        const mg = li.querySelector('.mapgrid');
-        const sheetNames = Object.keys(e.sheets);
-        if (sheetNames.length>1){
-          mg.insertAdjacentHTML('beforeend', `<span>시트</span><select data-sheet>${sheetNames.map(s=>`<option ${s===e.sheet?'selected':''}>${esc(s)}</option>`).join('')}</select>`);
-        }
-        mg.insertAdjacentHTML('beforeend', `<span>헤더 행</span><input type="number" min="1" value="${e.headerRow+1}" data-hr>`);
-        FIELDS[ds].forEach(([f,label,req])=>{
-          const opts = `<option value="-1">(없음)</option>` + e.headers.map((h,ci)=>`<option value="${ci}" ${e.map[f]===ci?'selected':''}>${esc(h||('열 '+(ci+1)))}</option>`).join('');
-          mg.insertAdjacentHTML('beforeend', `<span>${label}${req?' *':''}</span><select data-f="${f}">${opts}</select>`);
-        });
-        mg.querySelectorAll('select[data-f]').forEach(s=>s.onchange=()=>{ e.map[s.dataset.f]=+s.value; renderUploads(); });
-        const ss = mg.querySelector('[data-sheet]'); if (ss) ss.onchange=()=>{ setSheet(e, ds, ss.value); renderUploads(); };
-        const hr = mg.querySelector('[data-hr]'); hr.onchange=()=>{ e.headerRow=Math.max(0,(+hr.value||1)-1); e.headers=(e.sheets[e.sheet][e.headerRow]||[]).map(String); e.map=autoMap(e.headers,FIELDS[ds]); renderUploads(); };
-        ul.appendChild(li);
-      });
-    }
+    if (ds === 'summary') renderSummaryList(ul); else renderFileList(ul, ds);
     g.appendChild(c);
   }
-  const ok = state.files.invoice.length>0;
+  const ok = usedEntries('invoice').length > 0 || sumLines().length > 0;
   $('btnRun').disabled = !ok;
-  $('runHint').textContent = ok ? '' : '이번 달 청구서를 먼저 올려 주세요.';
+  $('runHint').textContent = ok ? '' : '이번 달 청구서나 청구서 요약을 먼저 올려 주세요.';
+}
+function renderSummaryList(ul){
+  if (state.sumNote) ul.innerHTML = `<li><span class="name">${esc(state.sumNote)}</span></li>`;
+  (state.sumSrc || []).forEach((s, i) => {
+    const li = document.createElement('li'); li.style.flexDirection = 'column'; li.style.alignItems = 'stretch';
+    const by = {}; s.lines.forEach(l => { const c = l.cur || $('currency').value; by[c] = (by[c]||0) + l.amount; });
+    li.innerHTML = `<div class="row" style="justify-content:space-between;flex-wrap:nowrap"><span class="name" title="${esc(s.name)}">${esc(s.name)}</span><span class="row" style="flex-wrap:nowrap">${s.auto?'<span class="tag" title="이번 달 청구서 파일의 요약 시트에서 읽었어요">자동</span>':''}<button class="btn sm" data-x>삭제</button></span></div>
+      ${s.lines.length ? `<details class="map"><summary>항목 ${s.lines.length}개 · ${esc(moneyBy(by))}</summary><div class="tblwrap" style="margin-top:6px;max-height:260px;overflow:auto"><table><thead><tr><th>항목</th><th class="num">수량</th><th class="num">단가</th><th class="num">금액</th></tr></thead><tbody>${s.lines.map(l => `<tr><td>${l.group?`<span class="muted">${esc(l.group)} · </span>`:''}${esc(l.label)}</td><td class="num">${isNaN(l.qty)?'':l.qty.toLocaleString('en-US')}</td><td class="num">${isNaN(l.rate)?'':l.rate.toLocaleString('en-US')}</td><td class="num">${l.blank?'<span class="muted">-</span>':money(l.amount, l.cur)}</td></tr>`).join('')}</tbody></table></div></details>` : '<div class="muted" style="font-size:12px">항목표는 못 찾고 총액만 읽었어요</div>'}`;
+    li.querySelector('[data-x]').onclick = () => { state.sumSrc.splice(i, 1); applySummary(); renderUploads(); };
+    ul.appendChild(li);
+  });
+}
+function renderFileList(ul, ds){
+  const files = [...new Set(state.files[ds].map(e => e.file))];
+  files.forEach(file => {
+    const es = state.files[ds].filter(e => e.file === file);
+    const multi = es.length > 1;
+    const counts = new Map(es.map(e => [e, e.use ? extractRows(e, ds).length : 0]));
+    const total = [...counts.values()].reduce((a,b) => a+b, 0);
+    const li = document.createElement('li'); li.style.flexDirection = 'column'; li.style.alignItems = 'stretch';
+    const saved = ds === 'ship' && state.shipSavedAt ? `<span class="tag" title="브라우저에 저장돼 있어 다음에 열어도 남아 있어요 (${new Date(state.shipSavedAt).toLocaleString()})">저장됨</span>` : '';
+    const memTag = es.some(e => e.mem) ? '<span class="tag" title="예전에 맞춘 컬럼 매핑을 다시 적용했어요">기억한 매핑</span>' : '';
+    li.innerHTML = `<div class="row" style="justify-content:space-between;flex-wrap:nowrap"><span class="name" title="${esc(file)}">${esc(file)}</span><span class="row" style="flex-wrap:nowrap">${memTag}${saved}<span class="muted">${total.toLocaleString()}행</span><button class="btn sm" data-x>삭제</button></span></div>`;
+    li.querySelector('[data-x]').onclick = () => { state.files[ds] = state.files[ds].filter(e => e.file !== file); if (ds === 'ship') saveShip(); renderUploads(); };
+    es.forEach(e => li.appendChild(entryBlock(e, ds, multi, counts.get(e))));
+    ul.appendChild(li);
+  });
+}
+function entryBlock(e, ds, multi, n){
+  const div = document.createElement('div'); div.className = 'sheetent';
+  const miss = e.use ? missingOf(e, ds) : [];
+  const inv = ds === 'invoice' || ds === 'prev';
+  const kind = e.kind === 'pivot' ? '집계표' : e.use ? (e.wide.length ? `금액 열 ${e.wide.length}개` : '') : (inv && isSummaryLike(e) ? '요약 시트' : '');
+  const changed = () => { remember(ds, e); if (ds === 'ship') saveShip(); renderUploads(); };
+  div.innerHTML = `<div class="row" style="justify-content:space-between;flex-wrap:nowrap;gap:6px">
+      ${multi ? `<label class="row" style="gap:6px;flex-wrap:nowrap;min-width:0;cursor:pointer"><input type="checkbox" data-use ${e.use?'checked':''}><span class="name ${e.use?'':'muted'}">${esc(e.sheetName)}</span></label>` : '<span></span>'}
+      <span class="row" style="flex-wrap:nowrap;gap:6px">${kind?`<span class="tag">${kind}</span>`:''}${multi && e.use?`<span class="muted">${n.toLocaleString()}행</span>`:''}</span></div>
+    ${miss.length?`<div style="color:var(--danger);font-size:12px">매핑 필요: ${miss.join(', ')}</div>`:''}
+    ${e.use && e.kind === 'pivot' ? `<div class="muted" style="font-size:12px">${esc(e.pivotRows.map(p => p.chargeType).join(', '))}</div>` : ''}
+    ${e.use && e.kind !== 'pivot' ? `<details class="map" ${miss.length?'open':''}><summary>컬럼 매핑 확인</summary><div class="mapgrid"></div></details>` : ''}`;
+  const use = div.querySelector('[data-use]');
+  if (use) use.onchange = () => { e.use = use.checked; changed(); };
+  const mg = div.querySelector('.mapgrid');
+  if (!mg) return div;
+  mg.insertAdjacentHTML('beforeend', `<span>헤더 행</span><input type="number" min="1" value="${e.hdrTop+1}" data-hr>`);
+  FIELDS[ds].forEach(([f,label,req]) => {
+    const opts = `<option value="-1">(없음)</option>` + e.headers.map((h,ci) => `<option value="${ci}" ${e.map[f]===ci?'selected':''}>${esc(h||('열 '+(ci+1)))}</option>`).join('');
+    mg.insertAdjacentHTML('beforeend', `<span>${label}${req?' *':''}</span><select data-f="${f}">${opts}</select>`);
+  });
+  if (inv){
+    mg.insertAdjacentHTML('beforeend', `<span title="청구 항목 열이 없을 때 모든 행에 붙일 이름">항목 이름</span><input type="text" data-def value="${esc(e.defType)}" placeholder="항목 열이 없을 때 (예: 시트 이름)">`);
+    const wc = wideCands(e);
+    if (wc.length >= 2) mg.insertAdjacentHTML('beforeend', `<span title="한 줄에 금액 열이 여러 개면 열마다 청구 항목으로 나눠 읽어요">금액 열 나눠 읽기</span><div class="widebox">${wc.map(({c,h}) => `<label><input type="checkbox" data-w="${c}" ${e.wide.some(w=>w.c===c)?'checked':''}> ${esc(h)}</label>`).join('')}</div>`);
+  }
+  mg.querySelectorAll('select[data-f]').forEach(s => s.onchange = () => { e.map[s.dataset.f] = +s.value; if (s.dataset.f === 'chargeType' && +s.value >= 0) e.wide = []; changed(); });
+  const hr = mg.querySelector('[data-hr]'); hr.onchange = () => { setHeader(e, ds, Math.max(0, (+hr.value||1) - 1)); changed(); };
+  const def = mg.querySelector('[data-def]'); if (def) def.onchange = () => { e.defType = def.value.trim(); changed(); };
+  mg.querySelectorAll('[data-w]').forEach(cb => cb.onchange = () => {
+    const c = +cb.dataset.w;
+    e.wide = cb.checked ? e.wide.concat(wideCol(e, c)).sort((a,b) => a.c - b.c) : e.wide.filter(w => w.c !== c);
+    changed();
+  });
+  return div;
 }
 
 /* ========== 요율표 자동 정리: PDF·엑셀 → 요율 ========== */
@@ -947,33 +1247,54 @@ function rcPdfTiers(toks, used, src, res){
   });
 }
 /* 머리글(구분·항목·기준·단가…)이 있는 표: 병합 셀은 세로 위치로 행에 다시 채운다 */
-function rcPdfTables(toks, used, src, res){
+function rcPdfGrids(toks, used, roleFn, dataRole, hdrOk){
   const isHdr = L => {
-    const roles = L.toks.map(t => rcRole(t.s));
+    const roles = L.toks.map(t => roleFn(t.s));
     const rs = new Set(roles.filter(Boolean));
-    return roles.filter(Boolean).length >= L.toks.length * 0.6 && rs.has('price') && (rs.size >= 3 || rs.has('item') || rs.has('cat'));
+    return roles.filter(Boolean).length >= L.toks.length * 0.6 && hdrOk(rs);
   };
+  const isData = s => dataRole === 'price' ? rcPrice(s) : RC_NUMCELL.test(s);
+  const grids = [];
   const lines = rcLines(toks.filter(t => !used.has(t.id)));
   const hdrs = lines.filter(isHdr);
   hdrs.forEach((H, hi) => {
-    const cols = H.toks.map(t => ({role:rcRole(t.s), name:t.s, cx:t.cx})).sort((a,b) => a.cx - b.cx);
-    const colOf = cx => { let i = 0; while (i < cols.length - 1 && cx > (cols[i].cx + cols[i+1].cx) / 2) i++; return i; };
+    const cols = H.toks.map(t => ({role:roleFn(t.s), name:t.s, cx:t.cx})).sort((a,b) => a.cx - b.cx);
+    // 열 경계: 처음엔 머리글 가운데의 중간, 그다음엔 실제 글자가 비어 있는 세로 틈으로 다시 잡는다(왼쪽 정렬 표 대응)
+    let bounds = cols.slice(1).map((c,i) => (cols[i].cx + c.cx) / 2);
+    const colOf = cx => { let i = 0; while (i < bounds.length && cx > bounds[i]) i++; return i; };
     const yEnd = hdrs[hi+1] ? hdrs[hi+1].y : Infinity;
     const region = toks.filter(t => !used.has(t.id) && t.y > H.y + H.h * 0.5 && t.y < yEnd - H.h * 0.5);
-    const pset = new Set(cols.map((c,i) => c.role === 'price' ? i : -1).filter(i => i >= 0));
-    const dl = rcLines(region).filter(l => l.toks.some(t => pset.has(colOf(t.cx)) && rcPrice(t.s)));
+    const pset = new Set(cols.map((c,i) => c.role === dataRole ? i : -1).filter(i => i >= 0));
+    let dl, ys, gap, yMin, yMax;
+    const findRows = () => {
+      dl = rcLines(region).filter(l => l.toks.some(t => pset.has(colOf(t.cx)) && isData(t.s)));
+      ys = dl.map(l => l.y);
+      const gaps = ys.slice(1).map((y,i) => y - ys[i]).sort((a,b) => a - b);
+      gap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : H.h * 1.7;
+      yMin = ys[0] - gap * 0.7; yMax = ys[ys.length-1] + gap * 0.7;
+    };
+    findRows();
     if (!dl.length) return;
-    const ys = dl.map(l => l.y);
-    const gaps = ys.slice(1).map((y,i) => y - ys[i]).sort((a,b) => a - b);
-    const gap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : H.h * 1.7;
-    const yMin = ys[0] - gap * 0.7, yMax = ys[ys.length-1] + gap * 0.7;
+    const body = region.filter(t => t.y >= yMin && t.y <= yMax);
+    bounds = bounds.map((b, i) => {
+      const lo = cols[i].cx, hi2 = cols[i+1].cx;
+      let best = b, bestN = Infinity, bestD = Infinity;
+      for (let x = lo; x <= hi2; x += 0.5){
+        const n = body.reduce((a,t) => a + (t.x0 < x && t.x1 > x ? 1 : 0), 0);
+        const d = Math.abs(x - b);
+        if (n < bestN || (n === bestN && d < bestD)){ best = x; bestN = n; bestD = d; }
+      }
+      return best;
+    });
+    findRows();
+    if (!dl.length) return;
     const frac = y => {
       if (y <= ys[0]) return (y - ys[0]) / gap;
       if (y >= ys[ys.length-1]) return ys.length - 1 + (y - ys[ys.length-1]) / gap;
       let i = 0; while (ys[i+1] < y) i++;
       return i + (y - ys[i]) / (ys[i+1] - ys[i]);
     };
-    const SPAN = new Set(['cat','item']);
+    const SPAN = new Set(['cat','item','group']);
     const rows = dl.map(() => Array(cols.length).fill(''));
     const put = (ri, c, s) => { if (ri >= 0 && ri < rows.length && !rows[ri][c]) rows[ri][c] = s; };
     dl.forEach((l, ri) => l.toks.forEach(t => {
@@ -986,7 +1307,7 @@ function rcPdfTables(toks, used, src, res){
       const labels = [];
       mine.forEach(t => {
         const L = labels[labels.length-1];
-        if (L && t.y - L.yl <= t.h * 1.5 && Math.abs(L.cx - t.cx) <= 40){ L.s += ' ' + t.s; L.yl = t.y; L.toks.push(t); }
+        if (L && t.y - L.yl <= Math.min(t.h * 1.5, gap * 0.9) && Math.abs(L.cx - t.cx) <= 40){ L.s += ' ' + t.s; L.yl = t.y; L.toks.push(t); }
         else labels.push({s:t.s, y0:t.y, yl:t.y, cx:t.cx, toks:[t]});
       });
       labels.forEach(L => { L.f = frac((L.y0 + L.yl) / 2); L.toks.forEach(t => used.add(t.id)); });
@@ -1010,8 +1331,13 @@ function rcPdfTables(toks, used, src, res){
       }
     });
     const above = toks.filter(t => t.y < H.y && t.y >= H.y - gap * 3.2).map(t => t.s).join(' ');
-    rcTable({names:cols.map(c => c.name), rows, title:'', cur:rcUnitCur(above), src}, res);
+    grids.push({cols, rows, cur:rcUnitCur(above)});
   });
+  return grids;
+}
+function rcPdfTables(toks, used, src, res){
+  rcPdfGrids(toks, used, rcRole, 'price', rs => rs.has('price') && (rs.size >= 3 || rs.has('item') || rs.has('cat')))
+    .forEach(g => rcTable({names:g.cols.map(c => c.name), rows:g.rows, title:'', cur:g.cur, src}, res));
 }
 /* 표 밖 문장: "수출신고 건당 200원" 같은 요율과 조건 메모 */
 const RC_MONEY = /(?:(us\$|[$¥₩€])\s?([\d,]*\d(?:\.\d+)?)|([\d,]*\d(?:\.\d+)?)\s?(원|엔|円|krw|usd|jpy|달러))(?!\s*(?:이하|이상|미만|초과|까지|이내|%|[\d.,]))/i;
@@ -1273,7 +1599,7 @@ function renderRates(){
     const rateCell = tiers
       ? `<button class="btn sm" data-tier style="width:100%">구간 ${r.tiers.length}개 ${rateOpen.has(r)?'▴':'▾'}</button>`
       : `<input type="text" value="${r.rate===''||r.rate==null?'':esc(r.rate)}" data-k="rate" placeholder="변동" style="text-align:right">`;
-    const curNote = r.cur && (r.cur!==cur || tiers) ? `<div class="grp" style="text-align:right;margin-top:2px">${esc(r.cur)}${r.cur!==cur?' · 검증 제외':''}${tiers?` · ${esc(r.tierUnit)} 기준`:''}</div>` : '';
+    const curNote = r.cur && (r.cur!==cur || tiers) ? `<div class="grp" style="text-align:right;margin-top:2px">${esc(r.cur)}${tiers?` · ${esc(r.tierUnit)} 기준`:''}</div>` : '';
     tr.innerHTML = `<td>${r.group?`<div class="grp">${esc(r.group)}</div>`:''}<input type="text" value="${esc(r.chargeType)}" data-k="chargeType" placeholder="예: Pick & Pack"></td>
       <td><input type="text" value="${esc(r.alias||'')}" data-k="alias" placeholder="다르면 쉼표로"></td>
       <td><select data-k="channel">${['','B2C','B2B'].map(v=>`<option value="${v}" ${(r.channel||'')===v?'selected':''}>${v||'전체'}</option>`).join('')}</select></td>
@@ -1333,12 +1659,11 @@ $('rateDownload').onclick = ()=>{
 };
 function vendorSlug(){ return ($('vendorName').value||`업체${curTab+1}`).replace(/[^\w\-가-힣]/g,'_'); }
 function rateIndex(){
-  const cur = $('currency').value, out = [];
+  const tab = $('currency').value, out = [];
   state.rates.filter(r=>String(r.chargeType).trim()).forEach(r=>{
-    const other = !!r.cur && r.cur !== cur;
-    const base = {label:r.chargeType, ch:r.channel||'', basis:r.basis||'order',
-      rate: other || r.rate==='' || r.rate==null || isNaN(num(r.rate)) ? null : num(r.rate),
-      tiers: !other && r.tiers?.length ? r.tiers.slice().sort((a,b)=>a.max-b.max) : null, tierUnit:r.tierUnit||'g'};
+    const base = {label:r.chargeType, ch:r.channel||'', basis:r.basis||'order', cur:r.cur||tab,
+      rate: r.rate==='' || r.rate==null || isNaN(num(r.rate)) ? null : num(r.rate),
+      tiers: r.tiers?.length ? r.tiers.slice().sort((a,b)=>a.max-b.max) : null, tierUnit:r.tierUnit||'g'};
     [r.chargeType, ...String(r.alias||'').split(/[,;\n]/)].map(s=>s.trim()).filter(Boolean)
       .forEach(n=>out.push({...base, key:normKey(n)}));
   });
@@ -1370,8 +1695,29 @@ const TYPES = {
   PHANTOM:{ko:'출고 내역 없음', en:'No matching shipment in our records'},
   DUP_CREDIT:{ko:'크레딧 중복', en:'Duplicate credit'},
   NO_RATE:{ko:'계약 외 항목', en:'Charge not in contracted rate card'},
-  TOTAL:{ko:'PDF 총액 불일치', en:'PDF total does not match detail file'}
+  TOTAL:{ko:'청구서 총액 불일치', en:'Invoice total does not match detail file'},
+  SUMDIFF:{ko:'요약·세부 금액 차이', en:'Summary line differs from detail'}
 };
+// 요약 항목 이름과 세부내역 이름 맞추기: 공백·괄호 무시, 톤=T, 끝의 비/료/요금 무시
+const sumNorm = s => String(s ?? '').toLowerCase().replace(/톤/g,'t').replace(/[\s_\-.,()\[\]\/·:'"]+/g,'').replace(/(비용|요금|비|료|fees?|charges?)$/,'');
+function dice(a, b){
+  const bg = s => { const m = new Map(); for (let i = 0; i < s.length-1; i++){ const k = s.slice(i,i+2); m.set(k, (m.get(k)||0) + 1); } return m; };
+  const A = bg(a), B = bg(b); let o = 0, na = 0, nb = 0;
+  A.forEach(v => na += v); B.forEach(v => nb += v); A.forEach((v,k) => { o += Math.min(v, B.get(k)||0); });
+  return na + nb ? 2*o / (na + nb) : 0;
+}
+function bestBucket(name, B){
+  const q = sumNorm(name); if (!q) return null;
+  let best = null, bs = 0;
+  B.forEach(b => {
+    let s = 0;
+    if (b.k === q) s = 3;
+    else if (q.length >= 2 && b.k.length >= 2 && (b.k.includes(q) || q.includes(b.k))) s = 2 + Math.min(q.length, b.k.length) / 100;
+    else { const d = dice(q, b.k); if (d >= 0.6) s = 1 + d / 10; }
+    if (s > bs){ bs = s; best = b; }
+  });
+  return best;
+}
 
 function runAudit(){
   const tolPct = Math.max(0, +$('tolPct').value || 0);
@@ -1380,33 +1726,35 @@ function runAudit(){
   const add = (o) => { o.include = o.include ?? (o.sev==='high' && (o.impact??0) >= 0); issues.push(o); };
 
   // 1) 데이터 정리 (중량은 g으로 맞춘다: 머리글에 kg가 있거나 값이 작으면 kg로 본다)
+  const tabCur = $('currency').value;
   const wFactor = new Map();
-  state.files.invoice.forEach(e=>{
-    if (e.map.weight < 0) return;
+  usedEntries('invoice').forEach(e=>{
+    if (!(e.map.weight >= 0)) return;
     const h = String(e.headers[e.map.weight] || '').toLowerCase();
     let f = /kg/.test(h) ? 1000 : /\(g\)|\bg\b|gram|그램/.test(h) ? 1 : 0;
     if (!f){ const ws = extractRows(e,'invoice').map(r=>num(r.weight)).filter(n=>!isNaN(n)); f = ws.length && Math.max(...ws) <= 70 ? 1000 : 1; }
     wFactor.set(e.name, f);
   });
   const prep = (rows) => rows.map(r=>{
-    const text = `${r.chargeType} ${r.desc}`;
+    const text = `${r.chargeType} ${r.desc} ${r.group||''}`;
     let amount = num(r.amount);
     const isCreditText = /credit|refund|크레딧|환불|adjust/i.test(text);
     if (!isNaN(amount) && isCreditText && amount>0) amount = -amount;
     const qtyN = num(r.qty), rateN = num(r.rate), wN = num(r.weight);
-    return {...r, oid:normId(r.orderId), trk:normId(r.tracking), key:normKey(r.chargeType || r.desc),
+    const trk = normId(r.tracking);
+    return {...r, oid: normId(r.orderId) || (trk ? 'T:'+trk : ''), trk, key:normKey(r.chargeType || r.desc), cur: r._cur || tabCur,
       label:String(r.chargeType || r.desc || '').trim(), amount, qtyN, rateN, qty: isNaN(qtyN)?1:qtyN,
       wG: isNaN(wN) ? NaN : wN * (wFactor.get(r._file) || 1),
       ch: chanCell(r.channel) || chanOf(text), credit: !isNaN(amount) && amount<0, flags:[], full:false};
   }).filter(r=>!isNaN(r.amount));
 
-  const inv = prep(state.files.invoice.flatMap(e=>extractRows(e,'invoice')));
-  const prev = prep(state.files.prev.flatMap(e=>extractRows(e,'prev')));
-  const shipRows = state.files.ship.flatMap(e=>extractRows(e,'ship'));
+  const inv = prep(usedEntries('invoice').flatMap(e=>extractRows(e,'invoice')));
+  const prev = prep(usedEntries('prev').flatMap(e=>extractRows(e,'prev')));
+  const shipRows = usedEntries('ship').flatMap(e=>extractRows(e,'ship'));
   const hasShip = shipRows.length>0;
   const shipBy = new Map(), shipByTrk = new Map();
   shipRows.forEach(s=>{
-    const id = normId(s.orderId); if (!id) return;
+    const t0 = normId(s.tracking), id = normId(s.orderId) || (t0 ? 'T:'+t0 : ''); if (!id) return;
     const cur = shipBy.get(id) || {ch:'', qty:0, n:0};
     const ch = chanCell(s.channel); if (ch) cur.ch = ch;
     const q = num(s.qty); cur.qty += isNaN(q)?0:q; cur.n++;
@@ -1414,7 +1762,7 @@ function runAudit(){
     const t = normId(s.tracking); if (t) shipByTrk.set(t, id);
   });
   const shipOf = r => shipBy.get(r.oid) || (r.trk && shipByTrk.has(r.trk) ? shipBy.get(shipByTrk.get(r.trk)) : null);
-  const hasTrkCol = state.files.invoice.some(e=>e.map.tracking>=0);
+  const hasTrkCol = usedEntries('invoice').some(e=>e.map.tracking>=0);
 
   // 2) 크레딧 상계 (주문번호 + 금액 기준)
   function netting(rows){
@@ -1500,47 +1848,52 @@ function runAudit(){
   });
 
   // 6) 출고 내역 없음
+  // 한 주문에 청구 항목이 여러 줄이어도(배송비·수수료…) 주문당 한 건으로 묶는다
   if (hasShip){
+    const ph = new Map();
     inv.forEach(r=>{
-      if (r.credit || r.netted || !r.oid || r.full) return;
-      if (!shipOf(r)){
-        add({type:'PHANTOM', sev:'medium', r, impact:r.amount,
-          ko:`우리 출고 내역에 없는 주문 (출고 기간 차이인지 확인)`, en:`No matching shipment found in our records`});
-      }
+      if (r.credit || r.netted || !r.oid || r.full || shipOf(r)) return;
+      if (!ph.has(r.oid)) ph.set(r.oid, []);
+      ph.get(r.oid).push(r);
     });
+    for (const [, list] of ph){
+      const by = {}; list.forEach(x => by[x.cur] = r2((by[x.cur]||0) + x.amount));
+      const curs = Object.keys(by), one = curs.length === 1;
+      const labels = [...new Set(list.map(x=>x.label))].join(', ');
+      const r = list.length === 1 ? list[0] : {...list[0], label:labels, labelEn:labels, amount: one ? by[curs[0]] : by[list[0].cur]};
+      add({type:'PHANTOM', sev:'medium', r, impact: one ? by[curs[0]] : null,
+        ko:`우리 출고 내역에 없는 주문${list.length > 1 ? ` (청구 ${list.length}줄${one ? '' : ', ' + moneyBy(by)})` : ''} · 출고 기간 차이인지 확인`, en:`No matching shipment found in our records${one ? '' : ` (${moneyBy(by)})`}`});
+    }
   }
 
   // 7) 오분류 / 단가 / 계산 / 계약외
   const noRate = new Map(), misc = new Map();
-  inv.forEach(r=>{
-    if (r.credit || r.netted || r.full) return;
-    const s = r.oid ? shipOf(r) : null;
-    const ourCh = s?.ch || '';
-    const invCh = r.ch;
-    // 금액 계산
+  const RIby = new Map();
+  const RIfor = cur => { if (!RIby.has(cur)) RIby.set(cur, RI.filter(x=>x.cur===cur)); return RIby.get(cur); };
+  // 청구서 표기에 "해외배송비 ECO"처럼 항목+설명을 적어 두면 그 조합을 먼저 찾는다
+  const findRate = (r, ch) => {
+    const RIc = RIfor(r.cur);
+    if (String(r.desc ?? '').trim()){
+      const k2 = normKey(`${r.label} ${r.desc}`), ex = RIc.filter(x=>x.key===k2);
+      if (ex.length) return (ch && ex.find(x=>x.ch===ch)) || ex.find(x=>!x.ch) || ex[0];
+    }
+    return lookupRate(RIc, r.key, ch);
+  };
+  function checkLine(r, useCh){
+    // 금액 계산 (원 단위 반올림 차이는 넘어감)
     if (!isNaN(r.rateN) && !isNaN(r.qtyN)){
-      const exp = r2(r.qtyN * r.rateN);
-      if (Math.abs(exp - r.amount) > 0.011){
+      const exp = r2(r.qtyN * r.rateN), dd = Math.abs(exp - r.amount);
+      if (dd > 0.011 && !(Number.isInteger(r.amount) && dd < 1)){
         add({type:'CALC', sev: r.amount>exp?'high':'low', r, impact:r2(r.amount-exp),
-          ko:`수량 ${r.qtyN} × 단가 ${money(r.rateN)} = ${money(exp)} 인데 ${money(r.amount)} 청구`,
-          en:`Line amount does not match quantity x rate (${r.qtyN} x ${money(r.rateN)} = ${money(exp)})`});
+          ko:`수량 ${r.qtyN.toLocaleString('en-US')} × 단가 ${money(r.rateN, r.cur)} = ${money(exp, r.cur)} 인데 ${money(r.amount, r.cur)} 청구`,
+          en:`Line amount does not match quantity x rate (${r.qtyN} x ${money(r.rateN, r.cur)} = ${money(exp, r.cur)})`});
       }
     }
     if (!RI.length) return;
-    // 오분류
-    if (ourCh && invCh && ourCh !== invCh){
-      const a = lookupRate(RI, r.key, invCh), b = lookupRate(RI, r.key, ourCh);
-      let impact = null;
-      if (a && b && a.rate!=null && b.rate!=null && !a.missingChannel && !b.missingChannel) impact = r2((a.rate-b.rate)*r.qty);
-      const g = misc.get(r.oid) || {lines:[], impact:0, known:0, ourCh, invCh};
-      g.lines.push(r); if (impact!==null){ g.impact += impact; g.known++; }
-      misc.set(r.oid, g);
-    }
-    // 단가
-    const useCh = invCh || ourCh;
-    const rate = lookupRate(RI, r.key, useCh);
+    const rate = findRate(r, useCh);
     if (!rate || rate.missingChannel){
-      if (r.key){ const g = noRate.get(r.key) || {r, n:0, sum:0}; g.n++; g.sum += r.amount; noRate.set(r.key, g); }
+      if (!rate && RI.some(x=>x.cur!==r.cur) && lookupRate(RI.filter(x=>x.cur!==r.cur), r.key, useCh)) return; // 다른 통화 요율만 있음
+      if (r.key){ const k = r.key+'|'+r.cur; const g = noRate.get(k) || {r, n:0, sum:0}; g.n++; g.sum += r.amount; noRate.set(k, g); }
       return;
     }
     if (rate.rate === null){
@@ -1554,8 +1907,8 @@ function runAudit(){
           if (Math.abs(diff) > Math.max(0.005, t.rate * tolPct/100)){
             const wT = `${+w.toFixed(3)}${rate.tierUnit}`, bT = `${t.max.toLocaleString('en-US')}${rate.tierUnit}`;
             add({type:'RATE', sev: diff>0?'high':'low', r, impact:r2(diff * r.qty),
-              ko:`중량 ${wT} → ${bT} 이하 구간 계약 요금 ${money(t.rate)}, 청구 ${money(billed)}`,
-              en:`Billed ${money(billed)} for a ${wT} parcel; the contracted rate for the up-to-${bT} bracket is ${money(t.rate)}`});
+              ko:`중량 ${wT} → ${bT} 이하 구간 계약 요금 ${money(t.rate, r.cur)}, 청구 ${money(billed, r.cur)}`,
+              en:`Billed ${money(billed, r.cur)} for a ${wT} parcel; the contracted rate for the up-to-${bT} bracket is ${money(t.rate, r.cur)}`});
           }
         }
       }
@@ -1567,9 +1920,25 @@ function runAudit(){
     if (Math.abs(diff) > tol){
       const impact = r2(diff * r.qty);
       add({type:'RATE', sev: diff>0?'high':'low', r, impact,
-        ko:`청구 단가 ${money(billedRate)}, 계약 단가 ${money(rate.rate)}${useCh?` (${useCh})`:''}`,
-        en:`Billed at ${money(billedRate)} per ${rate.basis==='unit'?'unit':rate.basis}, contracted rate is ${money(rate.rate)}`});
+        ko:`청구 단가 ${money(billedRate, r.cur)}, 계약 단가 ${money(rate.rate, r.cur)}${useCh?` (${useCh})`:''}`,
+        en:`Billed at ${money(billedRate, r.cur)} per ${rate.basis==='unit'?'unit':rate.basis}, contracted rate is ${money(rate.rate, r.cur)}`});
     }
+  }
+  inv.forEach(r=>{
+    if (r.credit || r.netted || r.full) return;
+    const s = r.oid ? shipOf(r) : null;
+    const ourCh = s?.ch || '';
+    const invCh = r.ch;
+    // 오분류
+    if (RI.length && ourCh && invCh && ourCh !== invCh){
+      const a = lookupRate(RIfor(r.cur), r.key, invCh), b = lookupRate(RIfor(r.cur), r.key, ourCh);
+      let impact = null;
+      if (a && b && a.rate!=null && b.rate!=null && !a.missingChannel && !b.missingChannel) impact = r2((a.rate-b.rate)*r.qty);
+      const g = misc.get(r.oid) || {lines:[], impact:0, known:0, ourCh, invCh};
+      g.lines.push(r); if (impact!==null){ g.impact += impact; g.known++; }
+      misc.set(r.oid, g);
+    }
+    checkLine(r, invCh || ourCh);
   });
   for (const [, g] of misc){
     const f = g.lines[0];
@@ -1582,10 +1951,12 @@ function runAudit(){
       ko:`출고 내역은 ${g.ourCh}인데 ${g.invCh}로 청구됨` + (impact===null?' (요율표에 채널별 단가가 있으면 차액 계산)': impact<=0.005?' (이번 건은 금액상 불리하지 않음)':''),
       en:`Shipped as ${g.ourCh} per our records, but billed at ${g.invCh} rates`});
   }
-  for (const [, g] of noRate){
+  const flushNoRate = () => { for (const [, g] of noRate){
+    const hint = g.r._wide && String(g.r.desc ?? '').trim() ? ` · 요율표 "청구서 표기"에 "${g.r.label} ${g.r.desc}"처럼 적으면 연결돼요` : '';
     add({type:'NO_RATE', sev:'low', r:g.r, impact:0, include:false, count:g.n, sumAmt:g.sum,
-      ko:`요율표에 없는 항목 (${g.n}건, 합계 ${money(g.sum)})`, en:`"${g.r.label}" is not in our contracted rate card (${g.n} lines, ${money(g.sum)}). Please clarify`});
-  }
+      ko:`요율표에 없는 항목 (${g.n.toLocaleString()}건, 합계 ${money(g.sum, g.r.cur)})${hint}`, en:`"${g.r.label}" is not in our contracted rate card (${g.n} lines, ${money(g.sum, g.r.cur)}). Please clarify`});
+  } noRate.clear(); };
+  flushNoRate();
 
   // 8) 수량 과다 (개당 기준 항목)
   if (hasShip && RI.length){
@@ -1593,7 +1964,7 @@ function runAudit(){
     inv.forEach(r=>{
       if (r.credit || r.netted || r.full || !r.oid) return;
       const s = shipOf(r); if (!s || !s.qty) return;
-      const rate = lookupRate(RI, r.key, r.ch || s.ch);
+      const rate = findRate(r, r.ch || s.ch);
       if (!rate || rate.missingChannel || rate.basis!=='unit') return;
       const k = r.oid+'|'+r.key; const g = qg.get(k) || {r, q:0, rate, ship:s}; g.q += r.qty; qg.set(k,g);
     });
@@ -1606,23 +1977,81 @@ function runAudit(){
     }
   }
 
-  // 9) PDF 총액
-  const sum = r2(inv.reduce((a,r)=>a+r.amount,0));
+  // 9) 요약 총액 ↔ 세부 합계 (통화가 섞여 있으면 항목별 대사로 대신)
+  const sumBy = {}; inv.forEach(r=>{ sumBy[r.cur] = r2((sumBy[r.cur]||0) + r.amount); });
+  const sum = r2(sumBy[tabCur] || 0);
+  const mixed = Object.keys(sumBy).some(c => c !== tabCur && Math.abs(sumBy[c]) > 0.0049);
   const pdfT = num($('pdfTotal').value);
-  let totalCheck = null;
-  if (!isNaN(pdfT)){
+  const sumName = (state.sumSrc||[]).map(s=>s.name).join(', ') || state.sumNote || '요약 총액';
+  let totalCheck = null, pendingTotal = null;
+  if (!isNaN(pdfT) && inv.length){
     const d = r2(pdfT - sum);
-    totalCheck = {pdf:pdfT, sum, diff:d};
-    if (Math.abs(d) > 0.011){
-      add({type:'TOTAL', sev: d>0?'high':'low', r:{oid:'', label:'청구서 총액', labelEn:'Invoice total', amount:pdfT, _file:state.pdfName||'PDF', _row:''}, impact:d,
-        ko:`PDF 총액 ${money(pdfT)} vs 상세 합계 ${money(sum)}`, en:`Invoice PDF total (${money(pdfT)}) does not match the sum of the detail file (${money(sum)})`});
+    totalCheck = {pdf:pdfT, sum, diff:d, mixed};
+    if (!mixed && Math.abs(d) > 0.011 && !(Number.isInteger(pdfT) && Math.abs(d) < 1)){
+      pendingTotal = ({type:'TOTAL', sev: d>0?'high':'low', r:{oid:'', label:'청구서 총액', labelEn:'Invoice total', amount:pdfT, cur:tabCur, _file:sumName, _row:''}, impact:d,
+        ko:`요약 총액 ${money(pdfT)} vs 세부내역 합계 ${money(sum)}`, en:`Invoice total (${money(pdfT)}) does not match the sum of the detail lines (${money(sum)})`});
     }
   }
+
+  // 10) 요약의 항목별 금액 ↔ 세부내역 (항목 이름·시트 이름·구분으로 묶어서 비교)
+  const SL = sumLines();
+  let recon = null;
+  if (SL.length){
+    const B = new Map();
+    inv.forEach(r => {
+      const ks = [];
+      [[r.label,'label'], [r._sheet,'sheet'], [r.group,'group']].forEach(([n, kind]) => {
+        const k = sumNorm(n); if (!k || ks.includes(k)) return; ks.push(k);
+        let b = B.get(k); if (!b){ b = {k, name:String(n).trim(), kind, by:{}, n:0, used:false}; B.set(k, b); }
+        b.by[r.cur] = r2((b.by[r.cur]||0) + r.amount); b.n++;
+      });
+      r._bk = ks;
+    });
+    const groups = new Map(), rows = [];
+    SL.forEach(l => {
+      const m = bestBucket(l.label, B);
+      if (!m){ rows.push({ls:[l], lc:l.cur || tabCur, amount:l.amount, status: l.amount ? 'nodetail' : 'zero'}); return; }
+      const key = m.k + '|' + (l.cur || tabCur);
+      if (!groups.has(key)){ const g = {ls:[], lc:l.cur || tabCur, amount:0, m}; groups.set(key, g); rows.push(g); }
+      const g = groups.get(key); g.ls.push(l); g.amount = r2(g.amount + l.amount); m.used = true;
+    });
+    rows.forEach(g => {
+      if (!g.m) return;
+      const d = g.m.by[g.lc];
+      if (d === undefined){
+        const [oc, ov] = Object.entries(g.m.by).sort((a,b) => Math.abs(b[1]) - Math.abs(a[1]))[0];
+        Object.assign(g, {status:'fx', oc, ov, fx: ov ? g.amount / ov : null}); return;
+      }
+      g.d = d; g.diff = r2(g.amount - d);
+      const ok = Math.abs(g.diff) <= 0.011 || (Number.isInteger(g.amount) && Number.isInteger(Math.round(d)) && Math.abs(g.diff) < 1);
+      g.status = ok ? 'ok' : g.diff > 0 ? 'over' : 'under';
+      if (ok) return;
+      const label = g.ls.map(l => l.label).join(', ');
+      const pr = {label, labelEn:label, amount:g.amount, cur:g.lc, orderId:'', tracking:'', _file:g.ls[0]._src, _row:g.ls[0].row || ''};
+      add({type:'SUMDIFF', sev: g.status === 'over' ? 'medium' : 'low', r:pr, impact:g.diff, include:false,
+        ko: `요약 ${money(g.amount, g.lc)} ${g.status === 'over' ? '>' : '<'} 세부내역 "${g.m.name}" ${g.m.n.toLocaleString()}건 합계 ${money(d, g.lc)}` + (g.status === 'under' ? ' (요약 쪽이 적음)' : ''),
+        en: `Summary line "${label}" (${money(g.amount, g.lc)}) does not match the detail total for "${g.m.name}" (${money(d, g.lc)}, ${g.m.n} lines)`});
+    });
+    // 세부내역이 없는 요약 줄은 요약의 수량·단가로 직접 검사
+    rows.filter(g => g.status === 'nodetail').forEach(g => {
+      const l = g.ls[0];
+      checkLine({label:l.label, labelEn:l.label, chargeType:l.label, desc:'', key:normKey(l.label), amount:l.amount, cur:g.lc, qtyN:l.qty, rateN:l.rate,
+        qty: isNaN(l.qty) ? 1 : l.qty, orderId:'', tracking:'', _file:l._src, _row:l.row || '', _sum:true}, rcChanStrict(l.label));
+    });
+    flushNoRate();
+    const unc = new Map();
+    inv.forEach(r => { if (r._bk.some(k => B.get(k)?.used)) return; const k = r.label + '|' + r.cur; const g = unc.get(k) || {label:r.label, cur:r.cur, n:0, sum:0}; g.n++; g.sum = r2(g.sum + r.amount); unc.set(k, g); });
+    recon = {rows, uncovered:[...unc.values()].filter(g => Math.abs(g.sum) > 0.0049)};
+  }
+  // 세부내역이 요약의 일부 항목만 담고 있으면(예: 작업일지) 총액 차이는 당연하므로 항목별 대사로 대신
+  const partial = recon && inv.length && recon.rows.some(g => g.status === 'nodetail' && g.amount);
+  if (totalCheck && partial) totalCheck.partial = {have: recon.rows.filter(g => g.m).length, all: recon.rows.filter(g => g.amount || g.m).length};
+  else if (pendingTotal) add(pendingTotal);
 
   const order = {high:0, medium:1, low:2};
   issues.sort((a,b)=> order[a.sev]-order[b.sev] || (Math.abs(b.impact||0)-Math.abs(a.impact||0)));
   issues.forEach((x,i)=>x.id=i);
-  state.issues = issues; state.invRows = inv; state.sum = sum; state.totalCheck = totalCheck; state.ran = true;
+  state.issues = issues; state.invRows = inv; state.sum = sum; state.sumBy = sumBy; state.recon = recon; state.totalCheck = totalCheck; state.ran = true;
   state.filter = 'ALL';
   return issues;
 }
@@ -1631,20 +2060,23 @@ function runAudit(){
 function renderResults(){
   $('results').classList.remove('hidden'); renderTabs();
   const iss = state.issues;
-  const claim = r2(iss.filter(x=>x.include && (x.impact||0)>0).reduce((a,x)=>a+x.impact,0));
-  const fav = r2(iss.filter(x=>x.type==='DUP_CREDIT').reduce((a,x)=>a+Math.abs(x.impact||0),0));
+  const claimBy = byCur(iss.filter(x=>x.include && (x.impact||0)>0), x=>x.impact);
+  const favBy = byCur(iss.filter(x=>x.type==='DUP_CREDIT'), x=>Math.abs(x.impact||0));
   const lines = state.invRows.length;
   $('kpis').innerHTML = [
-    ['청구 합계 (상세)', money(state.sum), ''],
+    ['청구 합계 (세부내역)', moneyBy(state.sumBy || {}), ''],
     ['검증한 라인', lines.toLocaleString()+'건', ''],
     ['이상 건', iss.length+'건', iss.length?'warn':''],
-    ['조정 요청액 (체크된 건)', money(claim), claim>0?'bad':''],
-    ['크레딧 이상 (확인 필요)', money(fav), '']
+    ['조정 요청액 (체크된 건)', moneyBy(claimBy), Object.values(claimBy).some(v=>v>0)?'bad':''],
+    ['크레딧 이상 (확인 필요)', moneyBy(favBy), '']
   ].map(([l,v,c])=>`<div class="kpi ${c}"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
   const tc = state.totalCheck;
-  $('totalBanner').innerHTML = !tc ? `<div class="banner info">PDF 총액이 없어 총액 대사는 건너뛰었어요.</div>`
-    : Math.abs(tc.diff)<=0.011 ? `<div class="banner ok">PDF 총액 ${money(tc.pdf)}과 상세 합계가 일치합니다.</div>`
-    : `<div class="banner bad">PDF 총액 ${money(tc.pdf)}과 상세 합계 ${money(tc.sum)}가 ${money(tc.diff)} 차이 납니다.</div>`;
+  $('totalBanner').innerHTML = !tc ? (state.invRows.length ? `<div class="banner info">요약 총액이 없어 총액 대사는 건너뛰었어요.</div>` : `<div class="banner info">세부내역 없이 청구서 요약만으로 검증했어요.</div>`)
+    : tc.partial ? `<div class="banner info">세부내역이 요약 항목 ${tc.partial.all}개 중 ${tc.partial.have}개만 담고 있어 총액 대신 아래에서 항목별로 비교했어요. (세부내역 합계 ${money(tc.sum)}, 요약 총액 ${money(tc.pdf)})</div>`
+    : tc.mixed ? `<div class="banner info">세부내역에 통화가 섞여 있어(${esc(Object.keys(state.sumBy).join('·'))}) 총액 대신 아래에서 항목별로 비교했어요.</div>`
+    : Math.abs(tc.diff)<=0.011 || (Number.isInteger(tc.pdf) && Math.abs(tc.diff) < 1) ? `<div class="banner ok">요약 총액 ${money(tc.pdf)}과 세부내역 합계가 일치합니다.</div>`
+    : `<div class="banner bad">요약 총액 ${money(tc.pdf)}과 세부내역 합계 ${money(tc.sum)}가 ${money(tc.diff)} 차이 납니다.</div>`;
+  renderRecon();
   const counts = {}; iss.forEach(x=>counts[x.type]=(counts[x.type]||0)+1);
   $('chips').innerHTML = [`<button class="chip ${state.filter==='ALL'?'on':''}" data-t="ALL">전체 ${iss.length}</button>`]
     .concat(Object.keys(TYPES).filter(t=>counts[t]).map(t=>`<button class="chip ${state.filter===t?'on':''}" data-t="${t}">${TYPES[t].ko} ${counts[t]}</button>`)).join('');
@@ -1655,15 +2087,36 @@ function renderResults(){
       <td><input type="checkbox" data-id="${x.id}" ${x.include?'checked':''}></td>
       <td style="white-space:nowrap">${TYPES[x.type].ko}</td>
       <td><span class="sev ${x.sev}">${SEV[x.sev]}</span></td>
-      <td style="white-space:nowrap">${esc(x.r.orderId ?? x.r.oid ?? '') || '<span class="muted">-</span>'}</td>
+      <td style="white-space:nowrap">${esc(x.r.orderId || x.r.tracking || '') || '<span class="muted">-</span>'}</td>
       <td>${esc(x.r.label)}<div class="muted" style="font-size:12px">${esc(x.r._file)}${x.r._row?` · ${x.r._row}행`:''}</div></td>
-      <td class="num">${money(x.r.amount)}</td>
-      <td class="num ${(x.impact||0)>0?'pos':(x.impact||0)<0?'neg':''}">${x.impact===null?'<span class="muted">계산 불가</span>':money(x.impact)}</td>
+      <td class="num">${money(x.r.amount, x.r.cur)}</td>
+      <td class="num ${(x.impact||0)>0?'pos':(x.impact||0)<0?'neg':''}">${x.impact===null?'<span class="muted">계산 불가</span>':money(x.impact, x.r.cur)}</td>
       <td>${esc(x.ko)}</td></tr>`).join('')
     : `<tr><td colspan="8" class="empty">${iss.length?'이 유형의 이상 건이 없어요.':'이상 건이 없습니다. 청구서가 깨끗해요.'}</td></tr>`;
   $('issueBody').querySelectorAll('input[data-id]').forEach(cb=>cb.onchange=()=>{ iss[+cb.dataset.id].include = cb.checked; renderResults(); if(!$('emailCard').classList.contains('hidden')) buildEmail(); });
   $('chkAll').checked = list.length>0 && list.every(x=>x.include);
 }
+function renderRecon(){
+  const box = $('reconCard'), R = state.recon;
+  if (!R || !R.rows.length){ box.classList.add('hidden'); box.innerHTML = ''; return; }
+  box.classList.remove('hidden');
+  const ST = {ok:['일치','ok'], over:['요약이 큼','bad'], under:['요약이 작음','warn'], fx:['다른 통화','info'], nodetail:['세부내역 없음','info'], zero:['0원','info']};
+  const cnt = {}; R.rows.forEach(g => cnt[g.status] = (cnt[g.status]||0) + 1);
+  box.innerHTML = `<div class="row" style="justify-content:space-between"><h2 style="margin:0">청구서 요약 ↔ 세부내역</h2>
+      <span class="row" style="gap:6px">${Object.keys(ST).filter(k=>cnt[k]).map(k=>`<span class="st ${ST[k][1]}">${ST[k][0]} ${cnt[k]}</span>`).join('')}</span></div>
+    <p class="sub" style="font-size:13px;margin-top:4px">요약의 항목별 금액을 세부내역 합계와 비교했어요. 이름이 비슷한 항목·시트·구분끼리 묶었어요.</p>
+    <div class="tblwrap" style="margin-top:10px;max-height:520px;overflow:auto"><table><thead><tr><th>요약 항목</th><th class="num">요약 금액</th><th>세부내역</th><th class="num">세부 합계</th><th class="num">차이</th><th>상태</th></tr></thead><tbody>
+    ${R.rows.map(g => {
+      const l0 = g.ls[0];
+      const name = g.ls.map(l => esc(l.label)).join('<br>');
+      const det = g.m ? `${esc(g.m.name)} <span class="muted">${g.m.n.toLocaleString()}건</span>` : '<span class="muted">-</span>';
+      const dsum = g.status === 'fx' ? `${money(g.ov, g.oc)}${g.fx ? `<div class="muted" style="font-size:12px">1 ${g.oc} ≈ ${g.fx.toFixed(4)} ${g.lc}</div>` : ''}` : g.m ? money(g.d, g.lc) : '';
+      const diff = g.diff !== undefined && g.status !== 'ok' ? `<span class="${g.diff>0?'pos':'neg'}">${money(g.diff, g.lc)}</span>` : '';
+      return `<tr><td>${l0.group?`<div class="grp">${esc(l0.group)}</div>`:''}${name}</td><td class="num">${l0.blank && g.ls.length===1 ? '<span class="muted">-</span>' : money(g.amount, g.lc)}</td><td>${det}</td><td class="num">${dsum}</td><td class="num">${diff}</td><td><span class="st ${ST[g.status][1]}">${ST[g.status][0]}</span></td></tr>`;
+    }).join('')}</tbody></table></div>
+    ${R.uncovered.length ? `<details class="map" style="margin-top:8px"><summary>요약에 없는 세부내역 ${R.uncovered.length}개 항목</summary><ul class="notes">${R.uncovered.map(u => `<li>${esc(u.label)} · ${u.n.toLocaleString()}건 · ${money(u.sum, u.cur)}</li>`).join('')}</ul></details>` : ''}`;
+}
+function byCur(list, f){ const o = {}; list.forEach(x => { const c = x.r?.cur || $('currency').value; o[c] = r2((o[c]||0) + f(x)); }); return o; }
 $('chkAll').onchange = ()=>{ const v=$('chkAll').checked; state.issues.filter(x=>state.filter==='ALL'||x.type===state.filter).forEach(x=>x.include=v); renderResults(); };
 
 /* ========== 메일 ========== */
@@ -1671,25 +2124,26 @@ function buildEmail(){
   const sel = state.issues.filter(x=>x.include);
   const no = $('invNo').value.trim(), per = $('invPeriod').value.trim();
   const to = $('toName').value.trim() || 'there', from = $('fromName').value.trim();
-  const claim = r2(sel.filter(x=>(x.impact||0)>0).reduce((a,x)=>a+x.impact,0));
+  const claimBy = byCur(sel.filter(x=>(x.impact||0)>0), x=>x.impact);
+  const claim = Object.values(claimBy).some(v=>v>0) ? 1 : 0, claimTxt = moneyBy(claimBy);
   const invRef = no ? `invoice ${no}` : 'the latest invoice';
   $('emailSubj').value = `${no?`Invoice ${no}`:'Invoice'}${per?` (${per})`:''} - Billing discrepancies for review`;
   const byType = {};
-  sel.forEach(x=>{ const t=byType[x.type]||(byType[x.type]={n:0,amt:0}); t.n++; t.amt+= Math.max(0,x.impact||0); });
+  sel.forEach(x=>{ const t=byType[x.type]||(byType[x.type]={n:0,amt:0,by:{}}); t.n++; t.amt+= Math.max(0,x.impact||0); const c=x.r.cur||$('currency').value; t.by[c]=r2((t.by[c]||0)+Math.max(0,x.impact||0)); });
   if ($('mailLang').value === 'ko'){
     const vendor = $('vendorName').value.trim();
     const toKo = $('toName').value.trim();
     $('emailSubj').value = `${vendor?`[${vendor}] `:''}${per?per+' ':''}청구서${no?`(${no})`:''} 정산 확인 요청`;
     const K = [];
     K.push(toKo ? `${toKo}님, 안녕하세요.` : '안녕하세요.', '');
-    K.push(`${per?per+' ':''}청구서${no?`(${no})`:''} 잘 받았습니다. 당사 출고 내역 및 계약 요율과 대사한 결과, 아래 ${sel.length}건에 대해 확인이 필요하여 연락드립니다.` + (claim>0?` 조정 요청 금액은 총 ${money(claim)}입니다.`:''), '');
+    K.push(`${per?per+' ':''}청구서${no?`(${no})`:''} 잘 받았습니다. 당사 출고 내역 및 계약 요율과 대사한 결과, 아래 ${sel.length}건에 대해 확인이 필요하여 연락드립니다.` + (claim>0?` 조정 요청 금액은 총 ${claimTxt}입니다.`:''), '');
     K.push('[요약]');
-    Object.entries(byType).forEach(([t,v])=>K.push(`- ${TYPES[t].ko}: ${v.n}건${v.amt>0?`, ${money(r2(v.amt))}`:''}`));
+    Object.entries(byType).forEach(([t,v])=>K.push(`- ${TYPES[t].ko}: ${v.n}건${v.amt>0?`, ${moneyBy(v.by)}`:''}`));
     K.push('', '[상세]');
     sel.forEach((x,i)=>{
-      const exp = x.impact===null ? '확인 필요' : money(r2(x.r.amount - (x.impact||0)));
+      const exp = x.impact===null ? '확인 필요' : money(r2(x.r.amount - (x.impact||0)), x.r.cur);
       const why = x.ko.replace(/\s*\([^()]*\)\s*$/,'');
-      const parts = [x.r.orderId?`주문 ${x.r.orderId}`:'', x.r.label, `청구 ${money(x.r.amount)}`, x.type==='NO_RATE'||x.type==='TOTAL'?'':`정상 ${exp}`, why].filter(Boolean);
+      const parts = [x.r.orderId?`주문 ${x.r.orderId}`:x.r.tracking?`송장 ${x.r.tracking}`:'', x.r.label, `청구 ${money(x.r.amount, x.r.cur)}`, x.type==='NO_RATE'||x.type==='TOTAL'?'':`정상 ${exp}`, why].filter(Boolean);
       K.push(`${i+1}. ${parts.join(' | ')}`);
     });
     K.push('', '확인 후 수정 청구서 발행 또는 차감 처리 부탁드립니다. 필요하시면 해당 건의 출고 데이터를 공유드리겠습니다.', '');
@@ -1699,13 +2153,13 @@ function buildEmail(){
   }
   const L = [];
   L.push(`Hi ${to},`, '');
-  L.push(`Thank you for sending over ${invRef}${per?` for ${per}`:''}. While reconciling it against our shipment records and the contracted rate card, we found ${sel.length} item${sel.length===1?'':'s'} that need${sel.length===1?'s':''} your review.` + (claim>0?` The total adjustment we are requesting is ${money(claim)}.`:''), '');
+  L.push(`Thank you for sending over ${invRef}${per?` for ${per}`:''}. While reconciling it against our shipment records and the contracted rate card, we found ${sel.length} item${sel.length===1?'':'s'} that need${sel.length===1?'s':''} your review.` + (claim>0?` The total adjustment we are requesting is ${claimTxt}.`:''), '');
   L.push('Summary:');
-  Object.entries(byType).forEach(([t,v])=>L.push(`- ${TYPES[t].en}: ${v.n} line${v.n===1?'':'s'}${v.amt>0?`, ${money(r2(v.amt))}`:''}`));
+  Object.entries(byType).forEach(([t,v])=>L.push(`- ${TYPES[t].en}: ${v.n} line${v.n===1?'':'s'}${v.amt>0?`, ${moneyBy(v.by)}`:''}`));
   L.push('', 'Details:');
   sel.forEach((x,i)=>{
-    const exp = x.impact===null ? 'TBD' : money(r2(x.r.amount - (x.impact||0)));
-    const parts = [x.r.orderId?`Order ${x.r.orderId}`:'', x.r.labelEn || x.r.label, `Billed ${money(x.r.amount)}`, x.type==='NO_RATE'||x.type==='TOTAL'?'':`Expected ${exp}`, x.en].filter(Boolean);
+    const exp = x.impact===null ? 'TBD' : money(r2(x.r.amount - (x.impact||0)), x.r.cur);
+    const parts = [x.r.orderId?`Order ${x.r.orderId}`:x.r.tracking?`Tracking ${x.r.tracking}`:'', x.r.labelEn || x.r.label, `Billed ${money(x.r.amount, x.r.cur)}`, x.type==='NO_RATE'||x.type==='TOTAL'?'':`Expected ${exp}`, x.en].filter(Boolean);
     L.push(`${i+1}. ${parts.join(' | ')}`);
   });
   L.push('', `Could you please review these items and issue a credit memo or a revised invoice? We are happy to share our shipment data for any of the lines above.`, '');
@@ -1723,18 +2177,27 @@ $('btnExport').onclick = ()=>{
   const wb = XLSX.utils.book_new();
   const SEV = {high:'높음', medium:'중간', low:'참고'};
   const iss = state.issues;
-  const claim = r2(iss.filter(x=>x.include && (x.impact||0)>0).reduce((a,x)=>a+x.impact,0));
-  const sumAoa = [['항목','값'],['청구서 번호',$('invNo').value],['청구 기간',$('invPeriod').value],['상세 합계',state.sum],['PDF 총액',state.totalCheck?.pdf ?? ''],['이상 건수',iss.length],['조정 요청액(체크된 건)',claim],[],['유형','건수','영향액 합계']];
+  const sumAoa = [['항목','값'],['청구서 번호',$('invNo').value],['청구 기간',$('invPeriod').value],['세부내역 합계',moneyBy(state.sumBy||{})],['요약 총액',state.totalCheck?.pdf ?? ''],['이상 건수',iss.length],['조정 요청액(체크된 건)',moneyBy(byCur(iss.filter(x=>x.include && (x.impact||0)>0), x=>x.impact))],[],['유형','건수','영향액 합계']];
   Object.keys(TYPES).forEach(t=>{ const l=iss.filter(x=>x.type===t); if(l.length) sumAoa.push([TYPES[t].ko,l.length,r2(l.reduce((a,x)=>a+(x.impact||0),0))]); });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sumAoa), '요약');
-  const aoa = [['요청 포함','유형','심각도','주문번호','송장번호','항목','파일','행','청구액','조정 요청액','기대 금액','사유(KR)','Reason(EN)']];
-  iss.forEach(x=>aoa.push([x.include?'Y':'', TYPES[x.type].ko, SEV[x.sev], x.r.orderId??'', x.r.tracking??'', x.r.label, x.r._file, x.r._row, x.r.amount, x.impact??'', x.impact===null?'':r2(x.r.amount-(x.impact||0)), x.ko, x.en]));
-  const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols']=[6,16,8,14,16,22,20,6,12,12,12,48,48].map(w=>({wch:w}));
+  const aoa = [['요청 포함','유형','심각도','주문번호','송장번호','항목','파일','행','통화','청구액','조정 요청액','기대 금액','사유(KR)','Reason(EN)']];
+  iss.forEach(x=>aoa.push([x.include?'Y':'', TYPES[x.type].ko, SEV[x.sev], x.r.orderId??'', x.r.tracking??'', x.r.label, x.r._file, x.r._row, x.r.cur||$('currency').value, x.r.amount, x.impact??'', x.impact===null?'':r2(x.r.amount-(x.impact||0)), x.ko, x.en]));
+  const ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols']=[6,16,8,14,16,22,20,6,6,12,12,12,48,48].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws, '이상건');
+  if (state.recon){
+    const ra = [['요약 항목','요약 금액','통화','세부내역','세부 건수','세부 합계','차이','상태']];
+    const STK = {ok:'일치', over:'요약이 큼', under:'요약이 작음', fx:'다른 통화', nodetail:'세부내역 없음', zero:'0원'};
+    state.recon.rows.forEach(g => ra.push([g.ls.map(l=>l.label).join(', '), g.amount, g.lc, g.m?.name ?? '', g.m?.n ?? '', g.status==='fx' ? `${g.ov} ${g.oc}` : g.d ?? '', g.diff ?? '', STK[g.status]]));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(ra), '요약대사');
+  }
   const flagBy = new Map(); iss.forEach(x=>{ if(!x.r._raw) return; const k=x.r._file+'|'+x.r._row; flagBy.set(k,(flagBy.get(k)?flagBy.get(k)+' / ':'')+TYPES[x.type].ko); });
-  state.files.invoice.forEach(e=>{
+  const taken = new Set(wb.SheetNames);
+  usedEntries('invoice').filter(e=>e.kind!=='pivot').forEach(e=>{
     const aoa2 = e.sheets[e.sheet].map((row,ri)=> ri<e.headerRow ? row : ri===e.headerRow ? ['검증결과',...row] : [flagBy.get(e.name+'|'+(ri+1))||'',...row]);
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa2), ('원본_'+e.name.replace(/\.[^.]+$/,'')).replace(/[\\\/\?\*\[\]:]/g,'').slice(0,31));
+    const base = ('원본_'+e.name.replace(/\.[^.]+$/,'').replace(/\.xlsx?\s·\s/i,'_')).replace(/[\\\/\?\*\[\]:]/g,'').slice(0,28);
+    let nm = base, k = 2; while (taken.has(nm)) nm = base.slice(0,26) + '_' + (k++);
+    taken.add(nm);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa2), nm);
   });
   const nm = vendorSlug() + ($('invNo').value?'_'+$('invNo').value.replace(/[^\w\-가-힣]/g,'_'):'');
   XLSX.writeFile(wb, `${nm}_청구검증결과.xlsx`);
@@ -1742,13 +2205,15 @@ $('btnExport').onclick = ()=>{
 
 /* ========== 실행 / 샘플 / 초기화 ========== */
 $('btnRun').onclick = ()=>{
-  const missing = state.files.invoice.flatMap(e=>FIELDS.invoice.filter(([f,,req])=>req && e.map[f]<0 && f!=='orderId').map(([,l])=>`${e.name}: ${l}`));
-  if (missing.length){ toast('필수 컬럼 매핑을 확인해 주세요'); return; }
+  const missing = usedEntries('invoice').flatMap(e=>missingOf(e,'invoice').map(l=>`${e.name}: ${l}`));
+  if (missing.length){ toast('필수 컬럼 매핑을 확인해 주세요: ' + missing[0]); return; }
+  ['invoice','prev','ship'].forEach(ds => state.files[ds].forEach(e => remember(ds, e)));
   try{ runAudit(); state.emailOpen=false; renderResults(); $('emailCard').classList.add('hidden'); $('results').scrollIntoView({behavior:'smooth'}); }
   catch(err){ console.error(err); toast('검증 중 오류: '+err.message); }
 };
 $('btnReset').onclick = ()=>{
-  state.files = {invoice:[],ship:[],prev:[]}; state.pdfName=''; state.pdfCands=''; state.issues=[]; state.ran=false; state.emailOpen=false;
+  state.files = {invoice:[], ship:state.files.ship, prev:[]}; state.sumSrc=[]; state.sumNote=''; state.pdfCands=''; state.issues=[]; state.ran=false; state.emailOpen=false; state.recon=null;
+  if (state.files.ship.length) toast('우리 출고 내역은 남겨 뒀어요. 지우려면 출고 내역의 삭제를 누르세요');
   ['invNo','invPeriod','pdfTotal'].forEach(id=>$(id).value='');
   $('pdfCands').classList.add('hidden'); $('results').classList.add('hidden'); $('emailCard').classList.add('hidden');
   renderUploads(); renderTabs();
@@ -1806,7 +2271,7 @@ $('btnSample').onclick = ()=>{
     ship:[buildFileEntry('출고내역_2026-09.xlsx',{'Sheet1':ship},'ship')],
     prev:[buildFileEntry('CGETC_Invoice_2026-08.xlsx',{'Detail':prev},'prev')]
   };
-  state.pdfName = '(샘플) PDF 총액 직접 입력';
+  state.sumSrc = []; state.sumNote = '(샘플) 총액 직접 입력';
   $('invNo').value = 'CG-2609-0142'; $('invPeriod').value = 'September 2026';
   $('pdfTotal').value = r2(sum + 45).toFixed(2);
   $('pdfCands').classList.add('hidden');
@@ -1816,6 +2281,7 @@ $('btnSample').onclick = ()=>{
 FORM_FIELDS.forEach(id=>{ const el=$(id); const h=()=>{ state.form[id]=el.value; if (KEEP_FIELDS.includes(id)) persistTab(curTab); if (id==='vendorName' && editingTab<0) renderTabs(); if (id==='currency') renderRates(); if (state.ran && ['currency'].includes(id)) renderResults(); };
   el.addEventListener('input', h); el.addEventListener('change', h); });
 loadForm(); renderTabs(); renderUploads(); renderRates();
+loadSavedShip();
 </script>
 </body>
 </html>
