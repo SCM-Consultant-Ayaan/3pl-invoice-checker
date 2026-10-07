@@ -136,7 +136,7 @@ ul.notes .btn{padding:0 6px;margin-left:4px;font-size:12px}
 
   <!-- STEP 1 -->
   <div class="card">
-    <h2>1. 파일 올리기</h2>
+    <div class="row" style="justify-content:space-between;align-items:baseline"><h2>1. 파일 올리기</h2><span class="muted" id="workNote" style="font-size:12px"></span></div>
     <div class="grid" id="uploadGrid"></div>
   </div>
 
@@ -447,7 +447,7 @@ function addTab(){
   saveForm();
   const id = Date.now().toString(36);
   const t = newTab(id, {vendorName:`업체 ${TABS.length+1}`, tolPct:'1', currency:'USD', mailLang:'en', toName:'', fromName:state.form.fromName||'Donghyun Shin'});
-  TABS.push(t); persistTab(TABS.length-1);
+  t.workLoaded = true; TABS.push(t); persistTab(TABS.length-1);
   curTab = -1; switchTab(TABS.length-1, true);
   editingTab = curTab; renderTabs();
 }
@@ -457,7 +457,7 @@ function deleteTab(i){
   clearTimeout(delTimer); delArmed = -1;
   const [gone] = TABS.splice(i,1);
   try{ localStorage.removeItem('audit_tab_'+gone.id); }catch(e){}
-  IDB.del('ship_'+gone.id);
+  IDB.del('ship_'+gone.id); IDB.del('work_'+gone.id);
   curTab = -1; switchTab(Math.min(i, TABS.length-1), true);
   toast(`"${gone.form.vendorName}" 탭을 삭제했어요`);
 }
@@ -468,6 +468,7 @@ function switchTab(i, skipSave){
   curTab = i; state = TABS[i]; persistIds();
   rcPending = null; $('rateFilter').value = '';
   loadForm(); renderTabs(); renderUploads(); renderRateReview(); renderRates();
+  if (state.rerun){ state.rerun = false; try{ runAudit(); }catch(err){ console.error(err); state.ran = false; } }
   if (state.ran) renderResults(); else $('results').classList.add('hidden');
   if (state.ran && state.emailOpen){ buildEmail(); $('emailCard').classList.remove('hidden'); } else $('emailCard').classList.add('hidden');
 }
@@ -693,6 +694,45 @@ function loadSavedShip(){
   }));
 }
 
+/* 이번 달 작업(청구서·요약·이전 달 청구서·청구서 번호 등)도 탭별로 저장. "이 탭 초기화"로 지운다 */
+const workTimers = new Map();
+function saveWork(tab = state){
+  if (!tab.workLoaded) return;   // 복원 전에 빈 상태로 덮어쓰지 않게
+  if (tab === state){
+    ['invNo','invPeriod','pdfTotal'].forEach(id => tab.form[id] = $(id).value);
+    tab.pdfCands = $('pdfCands').classList.contains('hidden') ? '' : $('pdfCands').innerHTML;
+  }
+  clearTimeout(workTimers.get(tab.id));
+  workTimers.set(tab.id, setTimeout(() => {
+    const empty = !tab.files.invoice.length && !tab.files.prev.length && !(tab.sumSrc || []).length && !tab.sumNote;
+    if (empty){ IDB.del('work_' + tab.id); tab.workSavedAt = 0; renderWorkNote(); return; }
+    tab.workSavedAt = Date.now();
+    IDB.set('work_' + tab.id, {at:tab.workSavedAt, invoice:tab.files.invoice, prev:tab.files.prev, sumSrc:tab.sumSrc || [], sumNote:tab.sumNote || '',
+      form:{invNo:tab.form.invNo || '', invPeriod:tab.form.invPeriod || '', pdfTotal:tab.form.pdfTotal || ''}, pdfCands:tab.pdfCands || '', ran:!!tab.ran});
+    renderWorkNote();
+  }, 600));
+}
+function renderWorkNote(){
+  const el = $('workNote'); if (!el) return;
+  el.textContent = state.workSavedAt ? `올린 파일은 이 브라우저에 저장돼 있어요 (${new Date(state.workSavedAt).toLocaleString()}) · "이 탭 초기화"를 누르면 지워져요` : '';
+}
+function loadSavedWork(){
+  TABS.forEach(t => IDB.get('work_' + t.id).then(v => {
+    if (v && !t.files.invoice.length && !t.files.prev.length && !(t.sumSrc || []).length){
+      t.files.invoice = v.invoice || []; t.files.prev = v.prev || []; t.sumSrc = v.sumSrc || []; t.sumNote = v.sumNote || '';
+      Object.assign(t.form, v.form || {}); t.pdfCands = v.pdfCands || ''; t.workSavedAt = v.at || 0;
+      t.workLoaded = true;
+      if (t === state){
+        loadForm(); renderUploads(); renderWorkNote();
+        if (v.ran && (usedEntries('invoice').length || sumLines().length)){
+          try{ runAudit(); renderResults(); }catch(err){ console.error(err); }
+        }
+        toast('지난번에 올린 파일을 불러왔어요');
+      } else if (v.ran){ t.rerun = true; }
+    }
+    t.workLoaded = true;
+  }).catch(() => { t.workLoaded = true; }));
+}
 function addLoading(ds, on){ state.loading = state.loading || {}; state.loading[ds] = on; renderUploads(); }
 async function addFiles(ds, fileList){
   const tabAtStart = curTab;
@@ -893,13 +933,14 @@ function applySummary(){
   const inv = text.match(/(?:invoice\s*(?:no|number|#)\.?|문서\s*번호|청구\s*번호|일련\s*번호)\s*[:#]?\s*([A-Z0-9][A-Z0-9\-\/]{2,})/i);
   if (inv && !$('invNo').value) $('invNo').value = inv[1];
   box.innerHTML = uniq.length ? `요약 총액 후보: ` + uniq.slice(0,6).map(c => `<button class="btn sm" data-v="${c.value}" title="${esc(c.label)}">${esc(c.label.length > 14 ? c.label.slice(0,13)+'…' : c.label)} ${money(c.value)}</button>`).join(' ') + ` <span>(클릭하면 적용)</span>` : '요약에서 총액을 찾지 못했어요. 요약 총액 칸에 직접 입력해 주세요.';
-  box.querySelectorAll('button[data-v]').forEach(b => b.onclick = () => { $('pdfTotal').value = String(+b.dataset.v); state.form.pdfTotal = $('pdfTotal').value; });
+  box.querySelectorAll('button[data-v]').forEach(b => b.onclick = () => { $('pdfTotal').value = String(+b.dataset.v); state.form.pdfTotal = $('pdfTotal').value; saveWork(); });
   box.classList.remove('hidden');
   state.form.pdfTotal = $('pdfTotal').value;
 }
 
 /* ========== 업로드 UI ========== */
 function renderUploads(){
+  saveWork(); renderWorkNote();
   const g = $('uploadGrid'); g.innerHTML = '';
   for (const [ds, meta] of Object.entries(DS_META)){
     const c = document.createElement('div'); c.className='card'; c.style.boxShadow='none'; c.style.minWidth='0';
@@ -2286,14 +2327,15 @@ $('btnRun').onclick = ()=>{
   const missing = usedEntries('invoice').flatMap(e=>missingOf(e,'invoice').map(l=>`${e.name}: ${l}`));
   if (missing.length){ toast('필수 컬럼 매핑을 확인해 주세요: ' + missing[0]); return; }
   ['invoice','prev','ship'].forEach(ds => state.files[ds].forEach(e => remember(ds, e)));
-  try{ runAudit(); state.emailOpen=false; renderResults(); $('emailCard').classList.add('hidden'); $('results').scrollIntoView({behavior:'smooth'}); }
+  try{ runAudit(); saveWork(); state.emailOpen=false; renderResults(); $('emailCard').classList.add('hidden'); $('results').scrollIntoView({behavior:'smooth'}); }
   catch(err){ console.error(err); toast('검증 중 오류: '+err.message); }
 };
 $('btnReset').onclick = ()=>{
   state.files = {invoice:[], ship:state.files.ship, prev:[]}; state.sumSrc=[]; state.sumNote=''; state.pdfCands=''; state.issues=[]; state.ran=false; state.emailOpen=false; state.recon=null;
-  if (state.files.ship.length) toast('우리 출고 내역은 남겨 뒀어요. 지우려면 출고 내역의 삭제를 누르세요');
-  ['invNo','invPeriod','pdfTotal'].forEach(id=>$(id).value='');
+  toast(state.files.ship.length ? '이번 달 파일을 지웠어요. 우리 출고 내역은 남겨 뒀어요' : '이번 달 파일을 지웠어요');
+  ['invNo','invPeriod','pdfTotal'].forEach(id=>{ $(id).value=''; state.form[id]=''; });
   $('pdfCands').classList.add('hidden'); $('results').classList.add('hidden'); $('emailCard').classList.add('hidden');
+  IDB.del('work_'+state.id); state.workSavedAt = 0;
   renderUploads(); renderTabs();
 };
 $('btnSample').onclick = ()=>{
@@ -2356,10 +2398,10 @@ $('btnSample').onclick = ()=>{
   renderUploads(); $('btnRun').click();
 };
 
-FORM_FIELDS.forEach(id=>{ const el=$(id); const h=()=>{ state.form[id]=el.value; if (KEEP_FIELDS.includes(id)) persistTab(curTab); if (id==='vendorName' && editingTab<0) renderTabs(); if (id==='currency') renderRates(); if (state.ran && ['currency'].includes(id)) renderResults(); };
+FORM_FIELDS.forEach(id=>{ const el=$(id); const h=()=>{ state.form[id]=el.value; if (['invNo','invPeriod','pdfTotal'].includes(id)) saveWork(); if (KEEP_FIELDS.includes(id)) persistTab(curTab); if (id==='vendorName' && editingTab<0) renderTabs(); if (id==='currency') renderRates(); if (state.ran && ['currency'].includes(id)) renderResults(); };
   el.addEventListener('input', h); el.addEventListener('change', h); });
 loadForm(); renderTabs(); renderUploads(); renderRates();
-loadSavedShip();
+loadSavedShip(); loadSavedWork();
 </script>
 </body>
 </html>
