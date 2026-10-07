@@ -1,0 +1,8 @@
+{
+  // Cloudflare Workers 정적 사이트 설정 — index.html 을 그대로 서빙한다.
+  "name": "3pl-invoice-checker",
+  "compatibility_date": "2026-10-07",
+  "assets": {
+    "directory": "./"
+  }
+}
